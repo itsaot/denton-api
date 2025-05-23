@@ -13,8 +13,11 @@ const path = require('path');
 const fs = require('fs');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
+const cors = require('cors');
 
-
+app.use(cors());
+app.options('*',cors());
+app.disable('x-powered-by');
 dotenv.config();
 connectDB();
 
