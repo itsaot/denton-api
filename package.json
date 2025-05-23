@@ -8,7 +8,7 @@
     "dev": "nodemon src/index.js"
   },
   "keywords": ["node", "express", "api", "mongodb", "jwt", "stripe"],
-  "author": "Your Team Name",
+  "author": "Khana&Calvin",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
