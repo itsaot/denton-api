@@ -5,6 +5,7 @@ const authRoutes = require('./routes/authRoutes');
 const mineRoutes = require('./routes/mineRoutes');
 const offerRoutes = require('./routes/offerRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const mineralRoutes = require('./routes/mineralRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const userRoutes = require('./routes/user');
@@ -47,6 +48,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/miniral', mineralRoutes);
 
 // File upload route
 app.post('/api/upload', protect, upload.single('file'), (req, res) => {
