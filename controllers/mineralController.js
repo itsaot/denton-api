@@ -1,129 +1,230 @@
-const Mineral = require('../models/mineralModel');
-const APIFeatures = require('../utils/apiFeatures');
-const AppError = require('../utils/appError');
-const catchAsync = require('../utils/catchAsync');
+const Mineral = require('../models/mineral');
 
-exports.getAllMinerals = catchAsync(async (req, res, next) => {
-  const features = new APIFeatures(Mineral.find(), req.query)
-    .filter()
-    .sort()
-    .limitFields()
-    .paginate();
-  
-  const minerals = await features.query;
+// Helper functions for API features
+const filterQuery = (query, filter) => {
+  const queryObj = { ...filter };
+  const excludedFields = ['page', 'sort', 'limit', 'fields'];
+  excludedFields.forEach(el => delete queryObj[el]);
 
-  res.status(200).json({
-    status: 'success',
-    results: minerals.length,
-    data: {
-      minerals
-    }
-  });
-});
+  let queryStr = JSON.stringify(queryObj);
+  queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, match => `$${match}`);
+  return query.find(JSON.parse(queryStr));
+};
 
-exports.getMineral = catchAsync(async (req, res, next) => {
-  const mineral = await Mineral.findById(req.params.id);
-
-  if (!mineral) {
-    return next(new AppError('No mineral found with that ID', 404));
+const sortQuery = (query, sort) => {
+  if (sort) {
+    const sortBy = sort.split(',').join(' ');
+    return query.sort(sortBy);
   }
+  return query.sort('-createdAt');
+};
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      mineral
-    }
-  });
-});
-
-exports.createMineral = catchAsync(async (req, res, next) => {
-  const newMineral = await Mineral.create(req.body);
-
-  res.status(201).json({
-    status: 'success',
-    data: {
-      mineral: newMineral
-    }
-  });
-});
-
-exports.updateMineral = catchAsync(async (req, res, next) => {
-  const mineral = await Mineral.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true
-  });
-
-  if (!mineral) {
-    return next(new AppError('No mineral found with that ID', 404));
+const limitFields = (query, fields) => {
+  if (fields) {
+    const selected = fields.split(',').join(' ');
+    return query.select(selected);
   }
+  return query.select('-__v');
+};
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      mineral
-    }
-  });
-});
+const paginate = (query, page, limit) => {
+  const pageNum = page * 1 || 1;
+  const limitNum = limit * 1 || 100;
+  const skip = (pageNum - 1) * limitNum;
+  return query.skip(skip).limit(limitNum);
+};
 
-exports.deleteMineral = catchAsync(async (req, res, next) => {
-  const mineral = await Mineral.findByIdAndDelete(req.params.id);
+// Controller methods
+exports.getAllMinerals = async (req, res, next) => {
+  try {
+    let query = Mineral.find();
+    
+    // 1) Filtering
+    query = filterQuery(query, req.query);
+    
+    // 2) Sorting
+    query = sortQuery(query, req.query.sort);
+    
+    // 3) Field limiting
+    query = limitFields(query, req.query.fields);
+    
+    // 4) Pagination
+    query = paginate(query, req.query.page, req.query.limit);
 
-  if (!mineral) {
-    return next(new AppError('No mineral found with that ID', 404));
-  }
+    const minerals = await query;
 
-  res.status(204).json({
-    status: 'success',
-    data: null
-  });
-});
-
-exports.getMineralStats = catchAsync(async (req, res, next) => {
-  const stats = await Mineral.aggregate([
-    {
-      $group: {
-        _id: '$mineralType',
-        numMinerals: { $sum: 1 },
-        avgPrice: { $avg: '$pricePerTonne' },
-        minPrice: { $min: '$pricePerTonne' },
-        maxPrice: { $max: '$pricePerTonne' },
-        totalQuantity: { $sum: '$availableTonnes' }
+    res.status(200).json({
+      status: 'success',
+      results: minerals.length,
+      data: {
+        minerals
       }
-    },
-    {
-      $sort: { avgPrice: 1 }
-    }
-  ]);
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      stats
-    }
-  });
-});
-
-exports.getMineralsWithin = catchAsync(async (req, res, next) => {
-  const { distance, latlng, unit } = req.params;
-  const [lat, lng] = latlng.split(',');
-
-  const radius = unit === 'mi' ? distance / 3963.2 : distance / 6378.1;
-
-  if (!lat || !lng) {
-    next(new AppError('Please provide latitude and longitude in the format lat,lng.', 400));
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
   }
+};
 
-  const minerals = await Mineral.find({
-    mineLocation: {
-      $geoWithin: { $centerSphere: [[lng, lat], radius] }
-    }
-  });
+exports.getMineral = async (req, res, next) => {
+  try {
+    const mineral = await Mineral.findById(req.params.id);
 
-  res.status(200).json({
-    status: 'success',
-    results: minerals.length,
-    data: {
-      data: minerals
+    if (!mineral) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No mineral found with that ID'
+      });
     }
-  });
-});
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        mineral
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
+  }
+};
+
+exports.createMineral = async (req, res, next) => {
+  try {
+    const newMineral = await Mineral.create(req.body);
+
+    res.status(201).json({
+      status: 'success',
+      data: {
+        mineral: newMineral
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
+  }
+};
+
+exports.updateMineral = async (req, res, next) => {
+  try {
+    const mineral = await Mineral.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true
+    });
+
+    if (!mineral) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No mineral found with that ID'
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        mineral
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
+  }
+};
+
+exports.deleteMineral = async (req, res, next) => {
+  try {
+    const mineral = await Mineral.findByIdAndDelete(req.params.id);
+
+    if (!mineral) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No mineral found with that ID'
+      });
+    }
+
+    res.status(204).json({
+      status: 'success',
+      data: null
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
+  }
+};
+
+exports.getMineralStats = async (req, res, next) => {
+  try {
+    const stats = await Mineral.aggregate([
+      {
+        $group: {
+          _id: '$mineralType',
+          numMinerals: { $sum: 1 },
+          avgPrice: { $avg: '$pricePerTonne' },
+          minPrice: { $min: '$pricePerTonne' },
+          maxPrice: { $max: '$pricePerTonne' },
+          totalQuantity: { $sum: '$availableTonnes' }
+        }
+      },
+      {
+        $sort: { avgPrice: 1 }
+      }
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        stats
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
+  }
+};
+
+exports.getMineralsWithin = async (req, res, next) => {
+  try {
+    const { distance, latlng, unit } = req.params;
+    const [lat, lng] = latlng.split(',');
+
+    const radius = unit === 'mi' ? distance / 3963.2 : distance / 6378.1;
+
+    if (!lat || !lng) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide latitude and longitude in the format lat,lng.'
+      });
+    }
+
+    const minerals = await Mineral.find({
+      mineLocation: {
+        $geoWithin: { $centerSphere: [[lng, lat], radius] }
+      }
+    });
+
+    res.status(200).json({
+      status: 'success',
+      results: minerals.length,
+      data: {
+        data: minerals
+      }
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err.message
+    });
+  }
+};
