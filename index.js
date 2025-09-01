@@ -41,14 +41,14 @@ app.use('/uploads', express.static(uploadDir));
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/mines', mineRoutes);
-app.use('/api/offers', offerRoutes);
+app.use('/api/auth', authRoutes); //done
+app.use('/api/mines', mineRoutes); //done
+app.use('/api/offers', offerRoutes); // done
 app.use('/api/messages', messageRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/user', userRoutes);
-app.use('/api/miniral', mineralRoutes);
+app.use('/api/user', userRoutes); //done
+app.use('/api/miniral', mineralRoutes); 
 
 // File upload route
 app.post('/api/upload', protect, upload.single('file'), (req, res) => {

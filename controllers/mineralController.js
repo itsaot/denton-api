@@ -94,6 +94,7 @@ exports.getMineral = async (req, res, next) => {
 };
 
 exports.createMineral = async (req, res, next) => {
+  console.log(req.body)
   try {
     const newMineral = await Mineral.create(req.body);
 

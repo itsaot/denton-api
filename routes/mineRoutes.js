@@ -33,6 +33,7 @@ const validateUpdateMine = [
 
 // Create a new mine
 router.post('/', validateCreateMine, async (req, res) => {
+  console.log('Body:', JSON.stringify(req.body, null, 2));
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });

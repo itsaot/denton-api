@@ -1,6 +1,8 @@
 const Mine = require('../models/Mine');
 
 exports.createMine = async (req, res) => {
+  console.log('Body : ' + req.body)
+  console.log('owner : ' + req.user._id)
   try {
     const mine = await Mine.create({ ...req.body, owner: req.user._id });
     res.status(201).json(mine);
