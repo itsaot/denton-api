@@ -8,6 +8,7 @@ const messageRoutes = require('./routes/messageRoutes');
 const mineralRoutes = require('./routes/mineralRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const heavyMachineRoutes = require('./routes/heavyMachine');
 const userRoutes = require('./routes/user');
 const { protect } = require('./middleware/authMiddleware');
 const upload = require('./middleware/uploadMiddleware');
@@ -49,6 +50,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/user', userRoutes); //done
 app.use('/api/miniral', mineralRoutes); 
+app.use('/api/heavy-machines',heavyMachineRoutes);//done
 
 // File upload route
 app.post('/api/upload', protect, upload.single('file'), (req, res) => {

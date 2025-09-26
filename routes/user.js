@@ -1,12 +1,15 @@
+// routes/user.js
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User'); // Adjust the path as needed
 const bcrypt = require('bcryptjs');
 const { check, validationResult } = require('express-validator');
+const { isValidObjectId } = require('mongoose'); // <-- ADD THIS
 
 // Middleware for validating ObjectId
 const validateObjectId = (req, res, next) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+  const { id } = req.params;
+  if (id && !isValidObjectId(id)) {
     return res.status(400).json({ message: 'Invalid ID format' });
   }
   next();
@@ -23,11 +26,11 @@ const validateCreateUser = [
 
 // Validation middleware for user update
 const validateUpdateUser = [
-  check('firstName').notEmpty().optional().withMessage('First name cannot be empty'),
-  check('lastName').notEmpty().optional().withMessage('Last name cannot be empty'),
-  check('email').isEmail().optional().withMessage('Please provide a valid email'),
-  check('password').isLength({ min: 6 }).optional().withMessage('Password must be at least 6 characters long'),
-  check('role').isIn(['mine_owner', 'investor', 'consultant', 'admin']).optional()
+  check('firstName').optional().notEmpty().withMessage('First name cannot be empty'),
+  check('lastName').optional().notEmpty().withMessage('Last name cannot be empty'),
+  check('email').optional().isEmail().withMessage('Please provide a valid email'),
+  check('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+  check('role').optional().isIn(['mine_owner', 'investor', 'consultant', 'admin'])
 ];
 
 // Create a new user
@@ -39,7 +42,7 @@ router.post('/', validateCreateUser, async (req, res) => {
 
   try {
     const { email, password, ...rest } = req.body;
-    
+
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -56,7 +59,7 @@ router.post('/', validateCreateUser, async (req, res) => {
     });
 
     await user.save();
-    
+
     // Don't send password back in response
     const userResponse = user.toObject();
     delete userResponse.password;
@@ -72,9 +75,11 @@ router.get('/', async (req, res) => {
   try {
     const { role, isVerified } = req.query;
     const filter = {};
-    
+
     if (role) filter.role = role;
-    if (isVerified) filter.isVerified = isVerified === 'true';
+    if (typeof isVerified !== 'undefined') {
+      filter.isVerified = String(isVerified).toLowerCase() === 'true';
+    }
 
     const users = await User.find(filter).select('-password');
     res.json(users);
@@ -87,9 +92,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', validateObjectId, async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -107,7 +110,6 @@ router.put('/:id', validateObjectId, validateUpdateUser, async (req, res) => {
     const { password, ...updateData } = req.body;
     const update = { ...updateData };
 
-    // If password is being updated, hash it first
     if (password) {
       update.password = await bcrypt.hash(password, 10);
     }
@@ -118,9 +120,7 @@ router.put('/:id', validateObjectId, validateUpdateUser, async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password');
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
     res.json(user);
   } catch (err) {
@@ -132,9 +132,7 @@ router.put('/:id', validateObjectId, validateUpdateUser, async (req, res) => {
 router.delete('/:id', validateObjectId, async (req, res) => {
   try {
     const user = await User.findByIdAndDelete(req.params.id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ message: 'User deleted successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -150,9 +148,7 @@ router.patch('/:id/business-details', validateObjectId, async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password');
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
     res.json(user);
   } catch (err) {
@@ -169,9 +165,7 @@ router.patch('/:id/preferences', validateObjectId, async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password');
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
     res.json(user);
   } catch (err) {
@@ -188,9 +182,7 @@ router.patch('/:id/verify', validateObjectId, async (req, res) => {
       { new: true }
     ).select('-password');
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
     res.json(user);
   } catch (err) {

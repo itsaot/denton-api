@@ -1,6 +1,8 @@
 const Mineral = require('../models/mineral');
+const mongoose = require('mongoose');
+const path = require('path');
 
-// Helper functions for API features
+// ------------------------ Query helpers ------------------------
 const filterQuery = (query, filter) => {
   const queryObj = { ...filter };
   const excludedFields = ['page', 'sort', 'limit', 'fields'];
@@ -34,20 +36,34 @@ const paginate = (query, page, limit) => {
   return query.skip(skip).limit(limitNum);
 };
 
-// Controller methods
-exports.getAllMinerals = async (req, res, next) => {
+// ------------------------ Small helper: build document from req.file ------------------------
+function buildDocFromFile(file) {
+  if (!file) return null;
+  return {
+    originalName: file.originalname,
+    filename: file.filename,
+    mimeType: file.mimetype,
+    size: file.size,
+    // this assumes you serve statics at /uploads (see router/app note below)
+    url: `/uploads/mineral-docs/${file.filename}`,
+    uploadedAt: new Date()
+  };
+}
+
+// ------------------------ Controllers ------------------------
+exports.getAllMinerals = async (req, res) => {
   try {
     let query = Mineral.find();
-    
+
     // 1) Filtering
     query = filterQuery(query, req.query);
-    
+
     // 2) Sorting
     query = sortQuery(query, req.query.sort);
-    
+
     // 3) Field limiting
     query = limitFields(query, req.query.fields);
-    
+
     // 4) Pagination
     query = paginate(query, req.query.page, req.query.limit);
 
@@ -56,63 +72,49 @@ exports.getAllMinerals = async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       results: minerals.length,
-      data: {
-        minerals
-      }
+      data: { minerals }
     });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
-exports.getMineral = async (req, res, next) => {
+exports.getMineral = async (req, res) => {
   try {
     const mineral = await Mineral.findById(req.params.id);
-
     if (!mineral) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No mineral found with that ID'
-      });
+      return res.status(404).json({ status: 'fail', message: 'No mineral found with that ID' });
     }
 
-    res.status(200).json({
-      status: 'success',
-      data: {
-        mineral
-      }
-    });
+    res.status(200).json({ status: 'success', data: { mineral } });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
-exports.createMineral = async (req, res, next) => {
-  console.log(req.body)
+// Create supports multipart/form-data with optional field "document" (PDF)
+exports.createMineral = async (req, res) => {
   try {
-    const newMineral = await Mineral.create(req.body);
+    const mineralData = { ...req.body };
+
+    // If a PDF was uploaded by multer in the router, attach it
+    const doc = buildDocFromFile(req.file);
+    if (doc) {
+      mineralData.documents = [doc];
+    }
+
+    const newMineral = await Mineral.create(mineralData);
 
     res.status(201).json({
       status: 'success',
-      data: {
-        mineral: newMineral
-      }
+      data: { mineral: newMineral }
     });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
-exports.updateMineral = async (req, res, next) => {
+exports.updateMineral = async (req, res) => {
   try {
     const mineral = await Mineral.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
@@ -120,50 +122,30 @@ exports.updateMineral = async (req, res, next) => {
     });
 
     if (!mineral) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No mineral found with that ID'
-      });
+      return res.status(404).json({ status: 'fail', message: 'No mineral found with that ID' });
     }
 
-    res.status(200).json({
-      status: 'success',
-      data: {
-        mineral
-      }
-    });
+    res.status(200).json({ status: 'success', data: { mineral } });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
-exports.deleteMineral = async (req, res, next) => {
+exports.deleteMineral = async (req, res) => {
   try {
     const mineral = await Mineral.findByIdAndDelete(req.params.id);
 
     if (!mineral) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No mineral found with that ID'
-      });
+      return res.status(404).json({ status: 'fail', message: 'No mineral found with that ID' });
     }
 
-    res.status(204).json({
-      status: 'success',
-      data: null
-    });
+    res.status(204).json({ status: 'success', data: null });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
-exports.getMineralStats = async (req, res, next) => {
+exports.getMineralStats = async (req, res) => {
   try {
     const stats = await Mineral.aggregate([
       {
@@ -176,26 +158,16 @@ exports.getMineralStats = async (req, res, next) => {
           totalQuantity: { $sum: '$availableTonnes' }
         }
       },
-      {
-        $sort: { avgPrice: 1 }
-      }
+      { $sort: { avgPrice: 1 } }
     ]);
 
-    res.status(200).json({
-      status: 'success',
-      data: {
-        stats
-      }
-    });
+    res.status(200).json({ status: 'success', data: { stats } });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
 
-exports.getMineralsWithin = async (req, res, next) => {
+exports.getMineralsWithin = async (req, res) => {
   try {
     const { distance, latlng, unit } = req.params;
     const [lat, lng] = latlng.split(',');
@@ -218,14 +190,35 @@ exports.getMineralsWithin = async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       results: minerals.length,
-      data: {
-        data: minerals
-      }
+      data: { data: minerals }
     });
   } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
+    res.status(400).json({ status: 'fail', message: err.message });
+  }
+};
+
+// ------------------------ NEW: upload a PDF to an existing mineral ------------------------
+// Expects multer to have put the file on req.file
+exports.uploadMineralDocument = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ status: 'fail', message: 'PDF file is required (field name: document)' });
+    }
+
+    const doc = buildDocFromFile(req.file);
+
+    const mineral = await Mineral.findByIdAndUpdate(
+      req.params.id,
+      { $push: { documents: doc } },
+      { new: true }
+    );
+
+    if (!mineral) {
+      return res.status(404).json({ status: 'fail', message: 'No mineral found with that ID' });
+    }
+
+    res.status(200).json({ status: 'success', data: { mineral } });
+  } catch (err) {
+    res.status(400).json({ status: 'fail', message: err.message });
   }
 };
