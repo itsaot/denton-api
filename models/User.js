@@ -8,8 +8,8 @@ const userSchema = new mongoose.Schema({
   contactNumber: { type: String },
   role: {
     type: String,
-    enum: ['mine_owner', 'investor', 'consultant', 'admin'],
-    default: 'investor'
+    enum: ['mine_owner', 'investor', 'consultant', 'admin','mineral_owner ','customer'],
+    default: 'customer'
   },
   businessDetails: {
     businessName: String,
