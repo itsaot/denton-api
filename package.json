@@ -2,25 +2,35 @@
   "name": "denton-vision-art-api",
   "version": "1.0.0",
   "description": "RESTful API for Denton Vision Art Platform",
-  "main": "src/index.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
-  "keywords": ["node", "express", "api", "mongodb", "jwt", "stripe"],
+  "keywords": [
+    "node",
+    "express",
+    "api",
+    "mongodb",
+    "jwt",
+    "stripe"
+  ],
   "author": "Khana&Calvin",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
-    "express": "^4.18.2",
+    "express": "^4.21.2",
+    "express-validator": "^7.2.1",
     "jsonwebtoken": "^9.0.0",
     "mongoose": "^7.5.0",
     "multer": "^1.4.5-lts.1",
-    "stripe": "^12.5.0"
+    "stripe": "^12.5.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.1.10"
   }
 }
