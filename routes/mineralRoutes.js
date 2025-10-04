@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
+const router = express.Router();
 
 // ------------------------ Multer setup for minerals ------------------------
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'mineral-docs');
