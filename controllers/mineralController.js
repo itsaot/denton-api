@@ -1,4 +1,4 @@
-const Mineral = require('../models/mineral');
+const Mineral = require('../models/Mineral');
 const mongoose = require('mongoose');
 const path = require('path');
 
