@@ -1,4 +1,4 @@
-const Mineral = require('../models/mineral');
+const Mineral = require('../models/Mineral');
 
 // Helper functions for API features
 const filterQuery = (query, filter) => {
