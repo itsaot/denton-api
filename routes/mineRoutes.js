@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const Mine = require('../models/Mine'); // Adjust the path as needed
+const Mine = require('../models/Mine');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
+const upload = require('../middleware/uploadMiddleware'); // Adjust path as needed
+const fs = require('fs').promises;
+const path = require('path');
 
 // Middleware for validating ObjectId
 const validateObjectId = (req, res, next) => {
@@ -31,25 +34,86 @@ const validateUpdateMine = [
   check('status').isIn(['Active', 'Idle', 'Exploration', 'Development']).optional()
 ];
 
-// Create a new mine
-router.post('/', validateCreateMine, async (req, res) => {
+// Helper function to clean up uploaded files on error
+const cleanupUploadedFiles = async (files) => {
+  if (!files) return;
+  
+  try {
+    const filePaths = [];
+    
+    if (files.documents) {
+      filePaths.push(...files.documents.map(file => file.path));
+    }
+    if (files.media) {
+      filePaths.push(...files.media.map(file => file.path));
+    }
+    if (files.file) {
+      filePaths.push(files.file.path);
+    }
+    
+    for (const filePath of filePaths) {
+      await fs.unlink(filePath).catch(console.error);
+    }
+  } catch (error) {
+    console.error('Error cleaning up files:', error);
+  }
+};
+
+// Create a new mine with file uploads
+router.post('/', upload.fields([
+  { name: 'documents', maxCount: 10 },
+  { name: 'media', maxCount: 10 }
+]), validateCreateMine, async (req, res) => {
   console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('Files:', req.files);
+  
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    await cleanupUploadedFiles(req.files);
     return res.status(400).json({ errors: errors.array() });
   }
 
   try {
-    // Verify owner exists (optional - remove if not needed)
+    // Verify owner exists
     const ownerExists = await mongoose.model('User').exists({ _id: req.body.owner });
     if (!ownerExists) {
+      await cleanupUploadedFiles(req.files);
       return res.status(400).json({ message: 'Owner user does not exist' });
     }
 
-    const mine = new Mine(req.body);
+    // Prepare mine data
+    const mineData = {
+      ...req.body,
+      price: Number(req.body.price)
+    };
+
+    // Process uploaded documents
+    if (req.files && req.files.documents) {
+      mineData.documents = req.files.documents.map(file => ({
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        mimetype: file.mimetype,
+        size: file.size
+      }));
+    }
+
+    // Process uploaded media
+    if (req.files && req.files.media) {
+      mineData.media = req.files.media.map(file => ({
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        mimetype: file.mimetype,
+        size: file.size
+      }));
+    }
+
+    const mine = new Mine(mineData);
     await mine.save();
     res.status(201).json(mine);
   } catch (err) {
+    await cleanupUploadedFiles(req.files);
     res.status(500).json({ message: err.message });
   }
 });
@@ -64,7 +128,6 @@ router.get('/', async (req, res) => {
     if (commodityType) filter.commodityType = commodityType;
     if (status) filter.status = status;
     
-    // Price range filtering
     if (minPrice || maxPrice) {
       filter.price = {};
       if (minPrice) filter.price.$gte = Number(minPrice);
@@ -73,6 +136,7 @@ router.get('/', async (req, res) => {
 
     const mines = await Mine.find(filter).populate('owner', 'firstName lastName email role');
     res.json(mines);
+    console.log(mines)
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -91,26 +155,60 @@ router.get('/:id', validateObjectId, async (req, res) => {
   }
 });
 
-// Update a mine
-router.put('/:id', validateObjectId, validateUpdateMine, async (req, res) => {
+// Update a mine with optional file uploads
+router.put('/:id', validateObjectId, upload.fields([
+  { name: 'documents', maxCount: 10 },
+  { name: 'media', maxCount: 10 }
+]), validateUpdateMine, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    await cleanupUploadedFiles(req.files);
     return res.status(400).json({ errors: errors.array() });
   }
 
   try {
+    const updateData = { ...req.body };
+    if (updateData.price) updateData.price = Number(updateData.price);
+
+    // Process new documents if any
+    if (req.files && req.files.documents) {
+      const newDocuments = req.files.documents.map(file => ({
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        mimetype: file.mimetype,
+        size: file.size
+      }));
+      updateData.$push = { documents: { $each: newDocuments } };
+    }
+
+    // Process new media if any
+    if (req.files && req.files.media) {
+      const newMedia = req.files.media.map(file => ({
+        filename: file.filename,
+        originalName: file.originalname,
+        path: file.path,
+        mimetype: file.mimetype,
+        size: file.size
+      }));
+      updateData.$push = updateData.$push || {};
+      updateData.$push.media = { $each: newMedia };
+    }
+
     const mine = await Mine.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     ).populate('owner', 'firstName lastName email role');
 
     if (!mine) {
+      await cleanupUploadedFiles(req.files);
       return res.status(404).json({ message: 'Mine not found' });
     }
 
     res.json(mine);
   } catch (err) {
+    await cleanupUploadedFiles(req.files);
     res.status(500).json({ message: err.message });
   }
 });
@@ -118,10 +216,24 @@ router.put('/:id', validateObjectId, validateUpdateMine, async (req, res) => {
 // Delete a mine
 router.delete('/:id', validateObjectId, async (req, res) => {
   try {
-    const mine = await Mine.findByIdAndDelete(req.params.id);
+    const mine = await Mine.findById(req.params.id);
     if (!mine) {
       return res.status(404).json({ message: 'Mine not found' });
     }
+
+    // Delete associated files
+    const filesToDelete = [
+      ...mine.documents.map(doc => doc.path),
+      ...mine.media.map(media => media.path)
+    ];
+
+    await Mine.findByIdAndDelete(req.params.id);
+
+    // Clean up files in background
+    filesToDelete.forEach(filePath => {
+      fs.unlink(filePath).catch(console.error);
+    });
+
     res.json({ message: 'Mine deleted successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -129,48 +241,118 @@ router.delete('/:id', validateObjectId, async (req, res) => {
 });
 
 // Add documents to a mine
-router.patch('/:id/documents', validateObjectId, async (req, res) => {
+router.patch('/:id/documents', validateObjectId, upload.array('documents', 10), async (req, res) => {
   try {
-    const { documents } = req.body;
-    if (!documents || !Array.isArray(documents)) {
-      return res.status(400).json({ message: 'Documents array is required' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No documents provided' });
     }
+
+    const newDocuments = req.files.map(file => ({
+      filename: file.filename,
+      originalName: file.originalname,
+      path: file.path,
+      mimetype: file.mimetype,
+      size: file.size
+    }));
 
     const mine = await Mine.findByIdAndUpdate(
       req.params.id,
-      { $push: { documents: { $each: documents } } },
+      { $push: { documents: { $each: newDocuments } } },
       { new: true }
     );
 
     if (!mine) {
+      await cleanupUploadedFiles({ documents: req.files });
       return res.status(404).json({ message: 'Mine not found' });
     }
 
     res.json(mine);
   } catch (err) {
+    await cleanupUploadedFiles({ documents: req.files });
     res.status(500).json({ message: err.message });
   }
 });
 
 // Add media to a mine
-router.patch('/:id/media', validateObjectId, async (req, res) => {
+router.patch('/:id/media', validateObjectId, upload.array('media', 10), async (req, res) => {
   try {
-    const { media } = req.body;
-    if (!media || !Array.isArray(media)) {
-      return res.status(400).json({ message: 'Media array is required' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No media files provided' });
     }
+
+    const newMedia = req.files.map(file => ({
+      filename: file.filename,
+      originalName: file.originalname,
+      path: file.path,
+      mimetype: file.mimetype,
+      size: file.size
+    }));
 
     const mine = await Mine.findByIdAndUpdate(
       req.params.id,
-      { $push: { media: { $each: media } } },
+      { $push: { media: { $each: newMedia } } },
       { new: true }
     );
 
     if (!mine) {
+      await cleanupUploadedFiles({ media: req.files });
       return res.status(404).json({ message: 'Mine not found' });
     }
 
     res.json(mine);
+  } catch (err) {
+    await cleanupUploadedFiles({ media: req.files });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Remove a document from a mine
+router.delete('/:id/documents/:docId', validateObjectId, async (req, res) => {
+  try {
+    const mine = await Mine.findById(req.params.id);
+    if (!mine) {
+      return res.status(404).json({ message: 'Mine not found' });
+    }
+
+    const document = mine.documents.id(req.params.docId);
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Delete file from filesystem
+    await fs.unlink(document.path).catch(console.error);
+
+    // Remove from array
+    mine.documents.pull(req.params.docId);
+    await mine.save();
+
+    res.json({ message: 'Document deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Remove media from a mine
+router.delete('/:id/media/:mediaId', validateObjectId, async (req, res) => {
+  try {
+    const mine = await Mine.findById(req.params.id);
+    if (!mine) {
+      return res.status(404).json({ message: 'Mine not found' });
+    }
+
+    const media = mine.media.id(req.params.mediaId);
+    if (!media) {
+      return res.status(404).json({ message: 'Media not found' });
+    }
+
+    // Delete file from filesystem
+    await fs.unlink(media.path).catch(console.error);
+
+    // Remove from array
+    mine.media.pull(req.params.mediaId);
+    await mine.save();
+
+    res.json({ message: 'Media deleted successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

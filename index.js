@@ -16,6 +16,7 @@ const fs = require('fs');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 const cors = require('cors');
+const morgan = require('morgan');
 
 // Load environment variables first
 dotenv.config();
@@ -31,6 +32,10 @@ app.use(cors());
 app.options('*', cors());
 app.disable('x-powered-by');
 app.use(express.json());
+
+// OR for more detailed output:
+app.use(morgan(':method :url :status :res[content-length] - :response-time ms'));
+
 
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, '..', 'uploads');
