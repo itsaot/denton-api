@@ -38,7 +38,7 @@ app.use(morgan(':method :url :status :res[content-length] - :response-time ms'))
 
 
 // Ensure uploads directory exists
-const uploadDir = path.join(__dirname, '..', 'uploads');
+const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 app.use('/uploads', express.static(uploadDir));
 
