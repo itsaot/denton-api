@@ -3,9 +3,131 @@ const router = express.Router();
 const Mine = require('../models/Mine');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
-const upload = require('../middleware/uploadMiddleware'); // Adjust path as needed
-const fs = require('fs').promises;
-const path = require('path');
+const multer = require('multer');
+const { Octokit } = require("@octokit/rest");
+require('dotenv').config();
+
+// GitHub configuration
+const octokit = new Octokit({
+  auth: process.env.GITHUB_TOKEN
+});
+
+// File type validation
+const FILE_TYPE_MAP = {
+  'image/png': 'png',
+  'image/jpeg': 'jpeg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'text/plain': 'txt'
+};
+
+// Multer configuration for memory storage
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // Limit file size to 10MB
+  fileFilter: (req, file, cb) => {
+    if (!FILE_TYPE_MAP[file.mimetype]) {
+      return cb(new Error('Invalid file type'), false);
+    }
+    cb(null, true);
+  },
+});
+
+// Helper function to create file path in GitHub repo
+const createFilePath = (fileName, type = 'uploads') => `public/${type}/${fileName}`;
+
+// Helper function to upload file to GitHub
+const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
+  try {
+    const filePath = createFilePath(fileName, type);
+    const content = file.buffer.toString('base64');
+    const [owner, repo] = process.env.GITHUB_REPO.split('/');
+    
+    const { data } = await octokit.repos.createOrUpdateFileContents({
+      owner,
+      repo,
+      path: filePath,
+      message: `Upload ${fileName}`,
+      content,
+      branch: process.env.GITHUB_BRANCH || 'main'
+    });
+    
+    // Return the raw GitHub URL
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
+  } catch (error) {
+    console.error('Error uploading file to GitHub:', error);
+    throw new Error('Failed to upload file to GitHub');
+  }
+};
+
+// Helper function to delete file from GitHub
+const deleteFileFromGitHub = async (fileUrl) => {
+  try {
+    // Extract path from GitHub URL
+    const [owner, repo] = process.env.GITHUB_REPO.split('/');
+    const urlParts = fileUrl.split('/');
+    const branch = process.env.GITHUB_BRANCH || 'main';
+    const pathIndex = urlParts.indexOf(branch) + 1;
+    
+    if (pathIndex > 0 && pathIndex < urlParts.length) {
+      const filePath = urlParts.slice(pathIndex).join('/');
+      
+      // Get the file's SHA (required for deletion)
+      const { data: fileData } = await octokit.repos.getContent({
+        owner,
+        repo,
+        path: filePath,
+        ref: branch
+      });
+      
+      // Delete the file
+      await octokit.repos.deleteFile({
+        owner,
+        repo,
+        path: filePath,
+        message: `Delete ${filePath.split('/').pop()}`,
+        sha: fileData.sha,
+        branch
+      });
+    }
+  } catch (error) {
+    console.error('Error deleting file from GitHub:', error);
+    // Don't throw, just log the error
+  }
+};
+
+// Helper function to clean up uploaded files on error
+const cleanupUploadedFiles = async (files) => {
+  if (!files) return;
+  
+  try {
+    const fileUrls = [];
+    
+    if (files.documents) {
+      fileUrls.push(...files.documents.map(file => file.githubUrl));
+    }
+    if (files.media) {
+      fileUrls.push(...files.media.map(file => file.githubUrl));
+    }
+    if (files.file) {
+      fileUrls.push(files.file.githubUrl);
+    }
+    
+    for (const fileUrl of fileUrls) {
+      if (fileUrl) {
+        await deleteFileFromGitHub(fileUrl).catch(console.error);
+      }
+    }
+  } catch (error) {
+    console.error('Error cleaning up files:', error);
+  }
+};
 
 // Middleware for validating ObjectId
 const validateObjectId = (req, res, next) => {
@@ -34,31 +156,6 @@ const validateUpdateMine = [
   check('status').isIn(['Active', 'Idle', 'Exploration', 'Development']).optional()
 ];
 
-// Helper function to clean up uploaded files on error
-const cleanupUploadedFiles = async (files) => {
-  if (!files) return;
-  
-  try {
-    const filePaths = [];
-    
-    if (files.documents) {
-      filePaths.push(...files.documents.map(file => file.path));
-    }
-    if (files.media) {
-      filePaths.push(...files.media.map(file => file.path));
-    }
-    if (files.file) {
-      filePaths.push(files.file.path);
-    }
-    
-    for (const filePath of filePaths) {
-      await fs.unlink(filePath).catch(console.error);
-    }
-  } catch (error) {
-    console.error('Error cleaning up files:', error);
-  }
-};
-
 // Create a new mine with file uploads
 router.post('/', upload.fields([
   { name: 'documents', maxCount: 10 },
@@ -69,7 +166,6 @@ router.post('/', upload.fields([
   
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    await cleanupUploadedFiles(req.files);
     return res.status(400).json({ errors: errors.array() });
   }
 
@@ -77,7 +173,6 @@ router.post('/', upload.fields([
     // Verify owner exists
     const ownerExists = await mongoose.model('User').exists({ _id: req.body.owner });
     if (!ownerExists) {
-      await cleanupUploadedFiles(req.files);
       return res.status(400).json({ message: 'Owner user does not exist' });
     }
 
@@ -89,24 +184,48 @@ router.post('/', upload.fields([
 
     // Process uploaded documents
     if (req.files && req.files.documents) {
-      mineData.documents = req.files.documents.map(file => ({
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        mimetype: file.mimetype,
-        size: file.size
-      }));
+      const documentPromises = req.files.documents.map(async (file) => {
+        if (!FILE_TYPE_MAP[file.mimetype]) {
+          throw new Error(`Invalid file type: ${file.mimetype}`);
+        }
+        
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+        const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
+        
+        return {
+          filename: fileName,
+          originalName: file.originalname,
+          path: githubUrl, // Store GitHub URL instead of local path
+          mimetype: file.mimetype,
+          size: file.size
+        };
+      });
+
+      mineData.documents = await Promise.all(documentPromises);
     }
 
     // Process uploaded media
     if (req.files && req.files.media) {
-      mineData.media = req.files.media.map(file => ({
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        mimetype: file.mimetype,
-        size: file.size
-      }));
+      const mediaPromises = req.files.media.map(async (file) => {
+        if (!FILE_TYPE_MAP[file.mimetype]) {
+          throw new Error(`Invalid file type: ${file.mimetype}`);
+        }
+        
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+        const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
+        
+        return {
+          filename: fileName,
+          originalName: file.originalname,
+          path: githubUrl, // Store GitHub URL instead of local path
+          mimetype: file.mimetype,
+          size: file.size
+        };
+      });
+
+      mineData.media = await Promise.all(mediaPromises);
     }
 
     const mine = new Mine(mineData);
@@ -162,7 +281,6 @@ router.put('/:id', validateObjectId, upload.fields([
 ]), validateUpdateMine, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    await cleanupUploadedFiles(req.files);
     return res.status(400).json({ errors: errors.array() });
   }
 
@@ -172,25 +290,49 @@ router.put('/:id', validateObjectId, upload.fields([
 
     // Process new documents if any
     if (req.files && req.files.documents) {
-      const newDocuments = req.files.documents.map(file => ({
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        mimetype: file.mimetype,
-        size: file.size
-      }));
+      const documentPromises = req.files.documents.map(async (file) => {
+        if (!FILE_TYPE_MAP[file.mimetype]) {
+          throw new Error(`Invalid file type: ${file.mimetype}`);
+        }
+        
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+        const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
+        
+        return {
+          filename: fileName,
+          originalName: file.originalname,
+          path: githubUrl,
+          mimetype: file.mimetype,
+          size: file.size
+        };
+      });
+
+      const newDocuments = await Promise.all(documentPromises);
       updateData.$push = { documents: { $each: newDocuments } };
     }
 
     // Process new media if any
     if (req.files && req.files.media) {
-      const newMedia = req.files.media.map(file => ({
-        filename: file.filename,
-        originalName: file.originalname,
-        path: file.path,
-        mimetype: file.mimetype,
-        size: file.size
-      }));
+      const mediaPromises = req.files.media.map(async (file) => {
+        if (!FILE_TYPE_MAP[file.mimetype]) {
+          throw new Error(`Invalid file type: ${file.mimetype}`);
+        }
+        
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+        const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
+        
+        return {
+          filename: fileName,
+          originalName: file.originalname,
+          path: githubUrl,
+          mimetype: file.mimetype,
+          size: file.size
+        };
+      });
+
+      const newMedia = await Promise.all(mediaPromises);
       updateData.$push = updateData.$push || {};
       updateData.$push.media = { $each: newMedia };
     }
@@ -221,18 +363,14 @@ router.delete('/:id', validateObjectId, async (req, res) => {
       return res.status(404).json({ message: 'Mine not found' });
     }
 
-    // Delete associated files
-    const filesToDelete = [
-      ...mine.documents.map(doc => doc.path),
-      ...mine.media.map(media => media.path)
+    // Delete associated files from GitHub
+    const fileDeletePromises = [
+      ...mine.documents.map(doc => deleteFileFromGitHub(doc.path)),
+      ...mine.media.map(media => deleteFileFromGitHub(media.path))
     ];
 
+    await Promise.all(fileDeletePromises);
     await Mine.findByIdAndDelete(req.params.id);
-
-    // Clean up files in background
-    filesToDelete.forEach(filePath => {
-      fs.unlink(filePath).catch(console.error);
-    });
 
     res.json({ message: 'Mine deleted successfully' });
   } catch (err) {
@@ -247,13 +385,25 @@ router.patch('/:id/documents', validateObjectId, upload.array('documents', 10), 
       return res.status(400).json({ message: 'No documents provided' });
     }
 
-    const newDocuments = req.files.map(file => ({
-      filename: file.filename,
-      originalName: file.originalname,
-      path: file.path,
-      mimetype: file.mimetype,
-      size: file.size
-    }));
+    const documentPromises = req.files.map(async (file) => {
+      if (!FILE_TYPE_MAP[file.mimetype]) {
+        throw new Error(`Invalid file type: ${file.mimetype}`);
+      }
+      
+      const fileExtension = FILE_TYPE_MAP[file.mimetype];
+      const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+      const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
+      
+      return {
+        filename: fileName,
+        originalName: file.originalname,
+        path: githubUrl,
+        mimetype: file.mimetype,
+        size: file.size
+      };
+    });
+
+    const newDocuments = await Promise.all(documentPromises);
 
     const mine = await Mine.findByIdAndUpdate(
       req.params.id,
@@ -262,7 +412,8 @@ router.patch('/:id/documents', validateObjectId, upload.array('documents', 10), 
     );
 
     if (!mine) {
-      await cleanupUploadedFiles({ documents: req.files });
+      // Clean up uploaded files if mine not found
+      await cleanupUploadedFiles({ documents: req.files.map((file, index) => ({ githubUrl: newDocuments[index].path })) });
       return res.status(404).json({ message: 'Mine not found' });
     }
 
@@ -280,13 +431,25 @@ router.patch('/:id/media', validateObjectId, upload.array('media', 10), async (r
       return res.status(400).json({ message: 'No media files provided' });
     }
 
-    const newMedia = req.files.map(file => ({
-      filename: file.filename,
-      originalName: file.originalname,
-      path: file.path,
-      mimetype: file.mimetype,
-      size: file.size
-    }));
+    const mediaPromises = req.files.map(async (file) => {
+      if (!FILE_TYPE_MAP[file.mimetype]) {
+        throw new Error(`Invalid file type: ${file.mimetype}`);
+      }
+      
+      const fileExtension = FILE_TYPE_MAP[file.mimetype];
+      const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+      const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
+      
+      return {
+        filename: fileName,
+        originalName: file.originalname,
+        path: githubUrl,
+        mimetype: file.mimetype,
+        size: file.size
+      };
+    });
+
+    const newMedia = await Promise.all(mediaPromises);
 
     const mine = await Mine.findByIdAndUpdate(
       req.params.id,
@@ -295,7 +458,8 @@ router.patch('/:id/media', validateObjectId, upload.array('media', 10), async (r
     );
 
     if (!mine) {
-      await cleanupUploadedFiles({ media: req.files });
+      // Clean up uploaded files if mine not found
+      await cleanupUploadedFiles({ media: req.files.map((file, index) => ({ githubUrl: newMedia[index].path })) });
       return res.status(404).json({ message: 'Mine not found' });
     }
 
@@ -319,8 +483,8 @@ router.delete('/:id/documents/:docId', validateObjectId, async (req, res) => {
       return res.status(404).json({ message: 'Document not found' });
     }
 
-    // Delete file from filesystem
-    await fs.unlink(document.path).catch(console.error);
+    // Delete file from GitHub
+    await deleteFileFromGitHub(document.path);
 
     // Remove from array
     mine.documents.pull(req.params.docId);
@@ -345,8 +509,8 @@ router.delete('/:id/media/:mediaId', validateObjectId, async (req, res) => {
       return res.status(404).json({ message: 'Media not found' });
     }
 
-    // Delete file from filesystem
-    await fs.unlink(media.path).catch(console.error);
+    // Delete file from GitHub
+    await deleteFileFromGitHub(media.path);
 
     // Remove from array
     mine.media.pull(req.params.mediaId);
