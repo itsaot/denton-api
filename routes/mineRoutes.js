@@ -42,99 +42,27 @@ const upload = multer({
 // Helper function to create file path in GitHub repo
 const createFilePath = (fileName, type = 'uploads') => `public/${type}/${fileName}`;
 
-// Helper function to generate sanitized filename
-const generateFileName = (originalname, mimetype) => {
-  const fileExtension = FILE_TYPE_MAP[mimetype];
-  // Remove special characters and spaces from original name
-  const baseName = originalname
-    .split('.')[0] // Remove extension
-    .replace(/[\(\)]/g, '-') // Replace parentheses with hyphens
-    .replace(/\s+/g, '-') // Replace spaces with hyphens
-    .replace(/[^a-zA-Z0-9\-]/g, ''); // Remove any other special characters
-  
-  return `${baseName}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
-};
-
 // Helper function to upload file to GitHub
 const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
-  let filePath;
-  
   try {
-    // Sanitize filename
-    const sanitizedFileName = fileName
-      .replace(/[\(\)]/g, '-')
-      .replace(/\s+/g, '-')
-      .replace(/[^a-zA-Z0-9\-\.]/g, '');
-    
-    filePath = createFilePath(sanitizedFileName, type);
+    const filePath = createFilePath(fileName, type);
     const content = file.buffer.toString('base64');
     const [owner, repo] = process.env.GITHUB_REPO.split('/');
-    const branch = process.env.GITHUB_BRANCH || 'main';
     
-    console.log(`Uploading to: ${owner}/${repo}/${filePath} on ${branch}`);
-    
-    // Check if file exists and get its SHA
-    let sha;
-    try {
-      const { data: existingFile } = await octokit.repos.getContent({
-        owner,
-        repo,
-        path: filePath,
-        ref: branch
-      });
-      sha = existingFile.sha;
-      console.log(`File exists with SHA: ${sha}. Will update.`);
-    } catch (error) {
-      if (error.status === 404) {
-        console.log('File does not exist, will create new');
-      } else {
-        throw error;
-      }
-    }
-    
-    // Upload the file with SHA if updating
     const { data } = await octokit.repos.createOrUpdateFileContents({
       owner,
       repo,
       path: filePath,
-      message: `Upload ${sanitizedFileName}`,
+      message: `Upload ${fileName}`,
       content,
-      branch,
-      sha // Include SHA when updating existing file
+      branch: process.env.GITHUB_BRANCH || 'main'
     });
     
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
-    console.log('File uploaded successfully:', rawUrl);
-    return rawUrl;
-    
+    // Return the raw GitHub URL
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
   } catch (error) {
-    console.error('Upload failed:', error);
-    
-    if (error.status === 409) {
-      // If SHA mismatch, try one more time without checking
-      try {
-        console.log('SHA mismatch, retrying without SHA...');
-        const [owner, repo] = process.env.GITHUB_REPO.split('/');
-        const branch = process.env.GITHUB_BRANCH || 'main';
-        
-        const { data } = await octokit.repos.createOrUpdateFileContents({
-          owner,
-          repo,
-          path: filePath,
-          message: `Upload ${fileName}`,
-          content: file.buffer.toString('base64'),
-          branch
-        });
-        
-        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
-        console.log('Retry successful:', rawUrl);
-        return rawUrl;
-      } catch (retryError) {
-        throw new Error('Failed after retry: ' + retryError.message);
-      }
-    }
-    
-    throw new Error('Upload failed: ' + error.message);
+    console.error('Error uploading file to GitHub:', error);
+    throw new Error('Failed to upload file to GitHub');
   }
 };
 
@@ -167,8 +95,6 @@ const deleteFileFromGitHub = async (fileUrl) => {
         sha: fileData.sha,
         branch
       });
-      
-      console.log(`File deleted successfully: ${filePath}`);
     }
   } catch (error) {
     console.error('Error deleting file from GitHub:', error);
@@ -230,76 +156,6 @@ const validateUpdateMine = [
   check('status').isIn(['Active', 'Idle', 'Exploration', 'Development']).optional()
 ];
 
-// Test GitHub connection endpoint
-router.get('/test/github-connection', async (req, res) => {
-  try {
-    const [owner, repo] = process.env.GITHUB_REPO.split('/');
-    const branch = process.env.GITHUB_BRANCH || 'main';
-    
-    console.log('Testing GitHub connection with:', { owner, repo, branch });
-    
-    // Test repository access
-    const repoData = await octokit.repos.get({
-      owner,
-      repo
-    });
-    
-    // Test branch access
-    const branchData = await octokit.repos.getBranch({
-      owner,
-      repo,
-      branch
-    });
-    
-    // Test if we can get contents of public folder
-    let publicFolderExists = false;
-    try {
-      await octokit.repos.getContent({
-        owner,
-        repo,
-        path: 'public',
-        ref: branch
-      });
-      publicFolderExists = true;
-    } catch (e) {
-      publicFolderExists = false;
-    }
-    
-    res.json({ 
-      success: true, 
-      message: 'GitHub connection successful',
-      repository: {
-        full_name: repoData.data.full_name,
-        default_branch: repoData.data.default_branch,
-        private: repoData.data.private
-      },
-      branch: {
-        name: branchData.data.name,
-        exists: true
-      },
-      public_folder_exists: publicFolderExists,
-      token_scopes: process.env.GITHUB_TOKEN ? 'Token provided' : 'Token missing',
-      github_repo_env: process.env.GITHUB_REPO
-    });
-  } catch (error) {
-    console.error('GitHub test failed:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'GitHub connection failed',
-      error: {
-        status: error.status,
-        message: error.message,
-        documentation_url: error.response?.data?.documentation_url
-      },
-      config: {
-        github_repo: process.env.GITHUB_REPO,
-        github_branch: process.env.GITHUB_BRANCH || 'main',
-        token_provided: !!process.env.GITHUB_TOKEN
-      }
-    });
-  }
-});
-
 // Create a new mine with file uploads
 router.post('/', upload.fields([
   { name: 'documents', maxCount: 10 },
@@ -323,101 +179,59 @@ router.post('/', upload.fields([
     // Prepare mine data
     const mineData = {
       ...req.body,
-      price: Number(req.body.price),
-      documents: [],
-      media: []
+      price: Number(req.body.price)
     };
 
-    const uploadErrors = [];
-    const successfulUploads = {
-      documents: [],
-      media: []
-    };
-
-    // Process uploaded documents with individual error handling
+    // Process uploaded documents
     if (req.files && req.files.documents) {
-      for (const file of req.files.documents) {
-        try {
-          if (!FILE_TYPE_MAP[file.mimetype]) {
-            throw new Error(`Invalid file type: ${file.mimetype}`);
-          }
-          
-          const fileName = generateFileName(file.originalname, file.mimetype);
-          const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
-          
-          successfulUploads.documents.push({
-            filename: fileName,
-            originalName: file.originalname,
-            path: githubUrl,
-            mimetype: file.mimetype,
-            size: file.size
-          });
-        } catch (error) {
-          console.error(`Failed to upload document ${file.originalname}:`, error);
-          uploadErrors.push({
-            file: file.originalname,
-            type: 'document',
-            error: error.message
-          });
+      const documentPromises = req.files.documents.map(async (file) => {
+        if (!FILE_TYPE_MAP[file.mimetype]) {
+          throw new Error(`Invalid file type: ${file.mimetype}`);
         }
-      }
+        
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+        const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
+        
+        return {
+          filename: fileName,
+          originalName: file.originalname,
+          path: githubUrl, // Store GitHub URL instead of local path
+          mimetype: file.mimetype,
+          size: file.size
+        };
+      });
+
+      mineData.documents = await Promise.all(documentPromises);
     }
 
-    // Process uploaded media with individual error handling
+    // Process uploaded media
     if (req.files && req.files.media) {
-      for (const file of req.files.media) {
-        try {
-          if (!FILE_TYPE_MAP[file.mimetype]) {
-            throw new Error(`Invalid file type: ${file.mimetype}`);
-          }
-          
-          const fileName = generateFileName(file.originalname, file.mimetype);
-          const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
-          
-          successfulUploads.media.push({
-            filename: fileName,
-            originalName: file.originalname,
-            path: githubUrl,
-            mimetype: file.mimetype,
-            size: file.size
-          });
-        } catch (error) {
-          console.error(`Failed to upload media ${file.originalname}:`, error);
-          uploadErrors.push({
-            file: file.originalname,
-            type: 'media',
-            error: error.message
-          });
+      const mediaPromises = req.files.media.map(async (file) => {
+        if (!FILE_TYPE_MAP[file.mimetype]) {
+          throw new Error(`Invalid file type: ${file.mimetype}`);
         }
-      }
+        
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
+        const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
+        
+        return {
+          filename: fileName,
+          originalName: file.originalname,
+          path: githubUrl, // Store GitHub URL instead of local path
+          mimetype: file.mimetype,
+          size: file.size
+        };
+      });
+
+      mineData.media = await Promise.all(mediaPromises);
     }
 
-    // After processing all files, check if any failed
-    if (uploadErrors.length > 0) {
-      // Clean up any successful uploads
-      await cleanupUploadedFiles({ 
-        documents: successfulUploads.documents,
-        media: successfulUploads.media 
-      });
-      
-      return res.status(400).json({ 
-        message: 'Some files failed to upload',
-        errors: uploadErrors 
-      });
-    }
-
-    // Add successfully uploaded files to mine data
-    mineData.documents = successfulUploads.documents;
-    mineData.media = successfulUploads.media;
-
-    // Create the mine
     const mine = new Mine(mineData);
     await mine.save();
-
     res.status(201).json(mine);
   } catch (err) {
-    console.error('Error creating mine:', err);
-    // Only cleanup if the entire operation failed before saving
     await cleanupUploadedFiles(req.files);
     res.status(500).json({ message: err.message });
   }
@@ -481,7 +295,8 @@ router.put('/:id', validateObjectId, upload.fields([
           throw new Error(`Invalid file type: ${file.mimetype}`);
         }
         
-        const fileName = generateFileName(file.originalname, file.mimetype);
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
         const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
         
         return {
@@ -504,7 +319,8 @@ router.put('/:id', validateObjectId, upload.fields([
           throw new Error(`Invalid file type: ${file.mimetype}`);
         }
         
-        const fileName = generateFileName(file.originalname, file.mimetype);
+        const fileExtension = FILE_TYPE_MAP[file.mimetype];
+        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
         const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
         
         return {
@@ -534,7 +350,6 @@ router.put('/:id', validateObjectId, upload.fields([
 
     res.json(mine);
   } catch (err) {
-    console.error('Error updating mine:', err);
     await cleanupUploadedFiles(req.files);
     res.status(500).json({ message: err.message });
   }
@@ -559,7 +374,6 @@ router.delete('/:id', validateObjectId, async (req, res) => {
 
     res.json({ message: 'Mine deleted successfully' });
   } catch (err) {
-    console.error('Error deleting mine:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -576,7 +390,8 @@ router.patch('/:id/documents', validateObjectId, upload.array('documents', 10), 
         throw new Error(`Invalid file type: ${file.mimetype}`);
       }
       
-      const fileName = generateFileName(file.originalname, file.mimetype);
+      const fileExtension = FILE_TYPE_MAP[file.mimetype];
+      const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
       const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
       
       return {
@@ -604,7 +419,6 @@ router.patch('/:id/documents', validateObjectId, upload.array('documents', 10), 
 
     res.json(mine);
   } catch (err) {
-    console.error('Error adding documents:', err);
     await cleanupUploadedFiles({ documents: req.files });
     res.status(500).json({ message: err.message });
   }
@@ -622,7 +436,8 @@ router.patch('/:id/media', validateObjectId, upload.array('media', 10), async (r
         throw new Error(`Invalid file type: ${file.mimetype}`);
       }
       
-      const fileName = generateFileName(file.originalname, file.mimetype);
+      const fileExtension = FILE_TYPE_MAP[file.mimetype];
+      const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
       const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
       
       return {
@@ -650,7 +465,6 @@ router.patch('/:id/media', validateObjectId, upload.array('media', 10), async (r
 
     res.json(mine);
   } catch (err) {
-    console.error('Error adding media:', err);
     await cleanupUploadedFiles({ media: req.files });
     res.status(500).json({ message: err.message });
   }
@@ -678,7 +492,6 @@ router.delete('/:id/documents/:docId', validateObjectId, async (req, res) => {
 
     res.json({ message: 'Document deleted successfully' });
   } catch (err) {
-    console.error('Error removing document:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -705,7 +518,6 @@ router.delete('/:id/media/:mediaId', validateObjectId, async (req, res) => {
 
     res.json({ message: 'Media deleted successfully' });
   } catch (err) {
-    console.error('Error removing media:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -734,43 +546,6 @@ router.get('/search/:query', async (req, res) => {
     res.json(mines);
   } catch (err) {
     res.status(500).json({ message: err.message });
-  }
-});
-
-
-// Add this endpoint to your routes
-router.post('/init-github-dirs', async (req, res) => {
-  try {
-    const [owner, repo] = process.env.GITHUB_REPO.split('/');
-    const branch = process.env.GITHUB_BRANCH || 'main';
-    
-    // Create directories by adding .gitkeep files
-    const dirs = ['public', 'public/documents', 'public/media', 'public/uploads'];
-    
-    for (const dir of dirs) {
-      try {
-        await octokit.repos.createOrUpdateFileContents({
-          owner,
-          repo,
-          path: `${dir}/.gitkeep`,
-          message: `Create directory: ${dir}`,
-          content: Buffer.from('').toString('base64'),
-          branch
-        });
-        console.log(`Created directory: ${dir}`);
-      } catch (err) {
-        if (err.status === 422) {
-          console.log(`Directory already exists: ${dir}`);
-        } else {
-          throw err;
-        }
-      }
-    }
-    
-    res.json({ message: 'GitHub directories initialized successfully' });
-  } catch (error) {
-    console.error('Error initializing directories:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 

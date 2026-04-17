@@ -1,15 +1,12 @@
-// middleware.uploadMiddleware.js
 const multer = require('multer');
 const path = require('path');
-const { Octokit } = require("@octokit/rest");
+const { Octokit } = require('@octokit/rest');
 require('dotenv').config();
 
-// GitHub configuration
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN
 });
 
-// File type validation
 const FILE_TYPE_MAP = {
   'image/png': 'png',
   'image/jpeg': 'jpeg',
@@ -18,198 +15,133 @@ const FILE_TYPE_MAP = {
   'application/pdf': 'pdf',
   'application/msword': 'doc',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
   'text/plain': 'txt'
 };
 
-// Use memory storage for GitHub uploads
-const storage = multer.memoryStorage();
-
-// File filter
-const fileFilter = (req, file, cb) => {
-  const isValid = !!FILE_TYPE_MAP[file.mimetype];
-  
-  if (isValid) {
-    cb(null, true);
-  } else {
-    cb(new Error('Invalid file type. Allowed types: jpeg, jpg, png, pdf, doc, docx'), false);
-  }
-};
-
-// Upload middleware
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  fileFilter
-});
-
-// Helper function to create file path in GitHub repo
 const createFilePath = (fileName, type = 'uploads') => `public/${type}/${fileName}`;
 
-// Helper function to upload file to GitHub
-const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
-  try {
-    const filePath = createFilePath(fileName, type);
-    const content = file.buffer.toString('base64');
-    const [owner, repo] = process.env.GITHUB_REPO.split('/');
-    
-    const { data } = await octokit.repos.createOrUpdateFileContents({
-      owner,
-      repo,
-      path: filePath,
-      message: `Upload ${fileName}`,
-      content,
-      branch: process.env.GITHUB_BRANCH || 'main'
-    });
-    
-    // Return the raw GitHub URL
-    return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
-  } catch (error) {
-    console.error('Error uploading file to GitHub:', error);
-    throw new Error('Failed to upload file to GitHub');
+const generateFileName = (originalname, mimetype) => {
+  const fileExtension = FILE_TYPE_MAP[mimetype];
+  if (!fileExtension) {
+    throw new Error(`Invalid file type: ${mimetype}`);
   }
+  const base = path.basename(originalname, path.extname(originalname)).split(' ').join('-');
+  return `${base}-${Date.now()}-${Math.round(Math.random() * 1e9)}.${fileExtension}`;
 };
 
-// Helper function to delete file from GitHub
+const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
+  const filePath = createFilePath(fileName, type);
+  const content = file.buffer.toString('base64');
+  const [owner, repo] = process.env.GITHUB_REPO.split('/');
+
+  const { data } = await octokit.repos.createOrUpdateFileContents({
+    owner,
+    repo,
+    path: filePath,
+    message: `Upload ${fileName}`,
+    content,
+    branch: process.env.GITHUB_BRANCH || 'main'
+  });
+
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
+};
+
 const deleteFileFromGitHub = async (fileUrl) => {
   try {
-    // Extract path from GitHub URL
     const [owner, repo] = process.env.GITHUB_REPO.split('/');
     const urlParts = fileUrl.split('/');
     const branch = process.env.GITHUB_BRANCH || 'main';
     const pathIndex = urlParts.indexOf(branch) + 1;
-    
+
     if (pathIndex > 0 && pathIndex < urlParts.length) {
-      const filePath = urlParts.slice(pathIndex).join('/');
-      
-      // Get the file's SHA (required for deletion)
+      const ghPath = urlParts.slice(pathIndex).join('/');
+
       const { data: fileData } = await octokit.repos.getContent({
         owner,
         repo,
-        path: filePath,
+        path: ghPath,
         ref: branch
       });
-      
-      // Delete the file
+
       await octokit.repos.deleteFile({
         owner,
         repo,
-        path: filePath,
-        message: `Delete ${filePath.split('/').pop()}`,
+        path: ghPath,
+        message: `Delete ${ghPath.split('/').pop()}`,
         sha: fileData.sha,
         branch
       });
     }
   } catch (error) {
     console.error('Error deleting file from GitHub:', error);
-    // Don't throw, just log the error
   }
 };
 
-// Helper function to generate unique filename
-const generateFileName = (originalName, mimetype) => {
-  const fileExtension = FILE_TYPE_MAP[mimetype];
-  const sanitizedName = originalName.split(' ').join('-').replace(/[^a-zA-Z0-9.-]/g, '');
-  const baseName = path.parse(sanitizedName).name;
-  return `${baseName}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
-};
-
-// Middleware to handle single file upload to GitHub
-const uploadSingleToGithub = (fieldName, type = 'uploads') => {
-  return async (req, res, next) => {
-    try {
-      if (!req.file) {
-        return next();
-      }
-
-      const fileName = generateFileName(req.file.originalname, req.file.mimetype);
-      const githubUrl = await uploadFileToGitHub(req.file, fileName, type);
-      
-      // Attach GitHub info to the file object
-      req.file.githubUrl = githubUrl;
-      req.file.filename = fileName;
-      req.file.path = githubUrl; // Override path with GitHub URL
-      
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
-
-// Middleware to handle multiple file uploads to GitHub
-const uploadMultipleToGithub = (fieldName, type = 'uploads', maxCount = 10) => {
-  return async (req, res, next) => {
-    try {
-      const files = req.files?.[fieldName] || req.files;
-      
-      if (!files || files.length === 0) {
-        return next();
-      }
-
-      const fileArray = Array.isArray(files) ? files : [files];
-      
-      const uploadPromises = fileArray.map(async (file) => {
-        const fileName = generateFileName(file.originalname, file.mimetype);
-        const githubUrl = await uploadFileToGitHub(file, fileName, type);
-        
-        // Attach GitHub info to the file object
-        file.githubUrl = githubUrl;
-        file.filename = fileName;
-        file.path = githubUrl; // Override path with GitHub URL
-        
-        return file;
-      });
-
-      const uploadedFiles = await Promise.all(uploadPromises);
-      
-      if (req.files && req.files[fieldName]) {
-        req.files[fieldName] = uploadedFiles;
-      } else {
-        req.files = uploadedFiles;
-      }
-      
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-};
-
-// Cleanup function for failed uploads
 const cleanupUploadedFiles = async (files) => {
   if (!files) return;
-  
-  try {
-    const fileUrls = [];
-    
-    if (Array.isArray(files)) {
-      fileUrls.push(...files.map(file => file.githubUrl));
-    } else if (typeof files === 'object') {
-      Object.values(files).forEach(fileArray => {
-        if (Array.isArray(fileArray)) {
-          fileUrls.push(...fileArray.map(file => file.githubUrl));
-        } else if (fileArray?.githubUrl) {
-          fileUrls.push(fileArray.githubUrl);
-        }
-      });
-    }
-    
-    for (const fileUrl of fileUrls) {
-      if (fileUrl) {
-        await deleteFileFromGitHub(fileUrl).catch(console.error);
-      }
-    }
-  } catch (error) {
-    console.error('Error cleaning up files:', error);
+
+  const urls = [];
+  if (Array.isArray(files)) {
+    files.forEach((f) => {
+      if (f.githubUrl) urls.push(f.githubUrl);
+    });
+  } else {
+    if (files.documents) urls.push(...files.documents.map((f) => f.githubUrl).filter(Boolean));
+    if (files.media) urls.push(...files.media.map((f) => f.githubUrl).filter(Boolean));
+    if (files.file && files.file.githubUrl) urls.push(files.file.githubUrl);
+  }
+
+  for (const fileUrl of urls) {
+    await deleteFileFromGitHub(fileUrl).catch(console.error);
   }
 };
 
-// Export all utilities
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!FILE_TYPE_MAP[file.mimetype]) {
+      return cb(new Error('Invalid file type'), false);
+    }
+    cb(null, true);
+  }
+});
+
+const uploadSingleToGithub = (_fieldName, type = 'uploads') => async (req, res, next) => {
+  try {
+    if (!req.file) return next();
+    const fileName = generateFileName(req.file.originalname, req.file.mimetype);
+    const githubUrl = await uploadFileToGitHub(req.file, fileName, type);
+    req.file.githubUrl = githubUrl;
+    req.file.filename = fileName;
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+const uploadMultipleToGithub = (_fieldName, type = 'uploads', _maxCount) => async (req, res, next) => {
+  try {
+    if (!req.files || !req.files.length) return next();
+    for (const file of req.files) {
+      const fileName = generateFileName(file.originalname, file.mimetype);
+      file.githubUrl = await uploadFileToGitHub(file, fileName, type);
+      file.filename = fileName;
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   upload,
+  generateFileName,
+  uploadFileToGitHub,
   uploadSingleToGithub,
   uploadMultipleToGithub,
-  cleanupUploadedFiles,
-  deleteFileFromGitHub,
-  FILE_TYPE_MAP
+  cleanupUploadedFiles
 };

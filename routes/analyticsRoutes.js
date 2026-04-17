@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Mine = require('../models/Mine');
+const Mineral = require('../models/Mineral');
 const Offer = require('../models/Offer');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
@@ -10,11 +11,18 @@ router.get('/user', protect, async (req, res) => {
     const mineCount = await Mine.countDocuments({ owner: req.user._id });
     const offerCount = await Offer.countDocuments({ investor: req.user._id });
     const listings = await Mine.find({ owner: req.user._id });
+    const mineralListings = await Mineral.find({ createdBy: req.user._id });
 
     const offerStats = await Promise.all(
       listings.map(async (mine) => {
         const count = await Offer.countDocuments({ mine: mine._id });
-        return { mine: mine.name, offers: count };
+        return { type: 'mine', name: mine.name, offers: count };
+      })
+    );
+    const mineralOfferStats = await Promise.all(
+      mineralListings.map(async (mineral) => {
+        const count = await Offer.countDocuments({ mineral: mineral._id });
+        return { type: 'mineral', name: mineral.name, offers: count };
       })
     );
 
@@ -22,6 +30,7 @@ router.get('/user', protect, async (req, res) => {
       totalListings: mineCount,
       totalOffersMade: offerCount,
       offerStats,
+      mineralOfferStats,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
