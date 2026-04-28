@@ -33,7 +33,7 @@ module.exports = {
     { name: 'Offers', description: 'Bids on mines or minerals' },
     { name: 'Messages', description: 'Conversations, DMs, exports' },
     { name: 'Analytics', description: 'User and admin stats' },
-    { name: 'Payments', description: 'Stripe PaymentIntents' },
+    { name: 'Payments', description: 'Stripe and Ozow payment flows' },
   ],
   paths,
   components: {
