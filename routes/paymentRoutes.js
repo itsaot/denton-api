@@ -1,20 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { protect } = require('../middleware/authMiddleware');
+const {
+  createOzowPayment,
+  createPaymentIntent,
+  getOzowStatusById,
+  getOzowStatusByReference,
+  handleOzowCallback,
+} = require('../controllers/paymentController');
 
-router.post('/create-intent', protect, async (req, res) => {
-  try {
-    const { amount, currency = 'zar' } = req.body;
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount,
-      currency,
-      metadata: { userId: req.user._id.toString() },
-    });
-    res.send({ clientSecret: paymentIntent.client_secret });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
+router.post('/create-intent', protect, createPaymentIntent);
+router.post('/ozow/initiate', protect, createOzowPayment);
+router.all('/ozow/callback/:outcome', handleOzowCallback);
+router.get('/ozow/status/reference/:transactionReference', protect, getOzowStatusByReference);
+router.get('/ozow/status/transaction/:transactionId', protect, getOzowStatusById);
 
 module.exports = router;
