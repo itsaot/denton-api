@@ -13,13 +13,19 @@ const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN
 });
 
-// File type validation for images
+// File type validation for images and documents
 const FILE_TYPE_MAP = {
   'image/png': 'png',
   'image/jpeg': 'jpeg',
   'image/jpg': 'jpg',
   'image/gif': 'gif',
-  'image/webp': 'webp'
+  'image/webp': 'webp',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'text/plain': 'txt'
 };
 
 // Multer configuration for memory storage
@@ -107,14 +113,29 @@ const deleteFileFromGitHub = async (fileUrl) => {
 // Helper function to clean up uploaded files on error
 const cleanupUploadedFiles = async (files) => {
   if (!files) return;
-  
+
   try {
-    if (files.images) {
-      for (const file of files.images) {
-        if (file.githubUrl) {
-          await deleteFileFromGitHub(file.githubUrl).catch(console.error);
-        }
+    const urls = [];
+    if (Array.isArray(files)) {
+      files.forEach((file) => {
+        if (file.githubUrl) urls.push(file.githubUrl);
+        if (file.url) urls.push(file.url);
+      });
+    } else {
+      if (files.images) {
+        files.images.forEach((file) => {
+          if (file.githubUrl) urls.push(file.githubUrl);
+        });
       }
+      if (files.documents) {
+        files.documents.forEach((file) => {
+          if (file.githubUrl) urls.push(file.githubUrl);
+          if (file.path) urls.push(file.path);
+        });
+      }
+    }
+    for (const url of urls) {
+      await deleteFileFromGitHub(url).catch(console.error);
     }
   } catch (error) {
     console.error('Error cleaning up files:', error);
@@ -127,6 +148,41 @@ const validateObjectId = (req, res, next) => {
     return res.status(400).json({ message: 'Invalid ID format' });
   }
   next();
+};
+
+const parseIdList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [String(value)];
+  } catch {
+    return String(value).split(',').map((s) => s.trim()).filter(Boolean);
+  }
+};
+
+const buildDocumentEntry = async (file) => {
+  const fileExtension = FILE_TYPE_MAP[file.mimetype];
+  const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1e9)}.${fileExtension}`;
+  const githubUrl = await uploadFileToGitHub(file, fileName, 'mineral-documents');
+  return {
+    filename: fileName,
+    originalName: file.originalname,
+    path: githubUrl,
+    mimetype: file.mimetype,
+    size: file.size
+  };
+};
+
+const buildImageEntry = async (file, index, body, isPrimaryDefault = false) => {
+  const fileExtension = FILE_TYPE_MAP[file.mimetype];
+  const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1e9)}.${fileExtension}`;
+  const githubUrl = await uploadFileToGitHub(file, fileName, 'mineral-images');
+  return {
+    url: githubUrl,
+    caption: body[`caption_${index}`] || file.originalname,
+    isPrimary: isPrimaryDefault && index === 0
+  };
 };
 
 // Helper functions for filtering, sorting, etc.
@@ -275,8 +331,13 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Create a new mineral with image uploads
-router.post('/', protect, restrictTo('admin', 'mineral-manager'), upload.array('images', 10), validateCreateMineral, async (req, res) => {
+const mineralUpload = upload.fields([
+  { name: 'images', maxCount: 10 },
+  { name: 'documents', maxCount: 10 }
+]);
+
+// Create a new mineral with image and document uploads
+router.post('/', protect, restrictTo('admin', 'mineral-manager'), mineralUpload, validateCreateMineral, async (req, res) => {
   console.log('Request body:', req.body);
   console.log('Request files:', req.files);
   const errors = validationResult(req);
@@ -307,28 +368,20 @@ router.post('/', protect, restrictTo('admin', 'mineral-manager'), upload.array('
         country: req.body.country
       },
       uses: req.body.uses ? req.body.uses.split(',').map(use => use.trim()) : [],
-      images: []
+      images: [],
+      documents: []
     };
 
     // Process uploaded images
-    if (req.files && req.files.length > 0) {
-      const imagePromises = req.files.map(async (file, index) => {
-        if (!FILE_TYPE_MAP[file.mimetype]) {
-          throw new Error(`Invalid file type: ${file.mimetype}`);
-        }
-        
-        const fileExtension = FILE_TYPE_MAP[file.mimetype];
-        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
-        const githubUrl = await uploadFileToGitHub(file, fileName, 'mineral-images');
-        
-        return {
-          url: githubUrl,
-          caption: req.body[`caption_${index}`] || file.originalname,
-          isPrimary: index === 0 // First image is primary by default
-        };
-      });
+    if (req.files && req.files.images) {
+      mineralData.images = await Promise.all(
+        req.files.images.map((file, index) => buildImageEntry(file, index, req.body, true))
+      );
+    }
 
-      mineralData.images = await Promise.all(imagePromises);
+    // Process uploaded documents
+    if (req.files && req.files.documents) {
+      mineralData.documents = await Promise.all(req.files.documents.map(buildDocumentEntry));
     }
 
     const mineral = new Mineral(mineralData);
@@ -371,77 +424,81 @@ router.get('/:id', validateObjectId, async (req, res) => {
   }
 });
 
-// Update a mineral
-router.patch('/:id', protect, restrictTo('admin', 'mineral-manager'), validateObjectId, upload.array('images', 10), validateUpdateMineral, async (req, res) => {
+// Update a mineral (fields, add/remove images and documents)
+router.patch('/:id', protect, restrictTo('admin', 'mineral-manager'), validateObjectId, mineralUpload, validateUpdateMineral, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
   try {
+    const mineral = await Mineral.findById(req.params.id);
+    if (!mineral) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No mineral found with that ID',
+      });
+    }
+
+    const reservedFields = ['deleteImageIds', 'deleteDocumentIds', 'coordinates', 'address', 'country', 'uses'];
     const updateData = { ...req.body };
-    
-    // Convert numeric fields
+    reservedFields.forEach((field) => delete updateData[field]);
+
     if (updateData.pricePerTonne) updateData.pricePerTonne = Number(updateData.pricePerTonne);
     if (updateData.availableTonnes) updateData.availableTonnes = Number(updateData.availableTonnes);
     if (updateData.hardness) updateData.hardness = Number(updateData.hardness);
     if (updateData.density) updateData.density = Number(updateData.density);
     if (updateData.mohsHardness) updateData.mohsHardness = Number(updateData.mohsHardness);
     if (updateData.specificGravity) updateData.specificGravity = Number(updateData.specificGravity);
-    
-    // Handle mineLocation update
-    if (updateData.coordinates || updateData.address || updateData.country) {
-      updateData.mineLocation = {
-        type: 'Point',
-        coordinates: updateData.coordinates ? JSON.parse(updateData.coordinates) : undefined,
-        address: updateData.address,
-        country: updateData.country
-      };
-      delete updateData.coordinates;
-      delete updateData.address;
-      delete updateData.country;
-    }
-    
-    // Handle uses array
-    if (updateData.uses) {
-      updateData.uses = updateData.uses.split(',').map(use => use.trim());
+
+    if (req.body.coordinates || req.body.address || req.body.country) {
+      mineral.mineLocation = mineral.mineLocation || { type: 'Point', coordinates: [] };
+      if (req.body.coordinates) {
+        mineral.mineLocation.coordinates = JSON.parse(req.body.coordinates);
+      }
+      if (req.body.address) mineral.mineLocation.address = req.body.address;
+      if (req.body.country) mineral.mineLocation.country = req.body.country;
     }
 
-    // Process new images if any
-    if (req.files && req.files.length > 0) {
-      const imagePromises = req.files.map(async (file, index) => {
-        if (!FILE_TYPE_MAP[file.mimetype]) {
-          throw new Error(`Invalid file type: ${file.mimetype}`);
-        }
-        
-        const fileExtension = FILE_TYPE_MAP[file.mimetype];
-        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
-        const githubUrl = await uploadFileToGitHub(file, fileName, 'mineral-images');
-        
-        return {
-          url: githubUrl,
-          caption: req.body[`caption_${index}`] || file.originalname,
-          isPrimary: false
-        };
-      });
-
-      const newImages = await Promise.all(imagePromises);
-      updateData.$push = { images: { $each: newImages } };
+    if (req.body.uses) {
+      mineral.uses = req.body.uses.split(',').map((use) => use.trim());
     }
 
-    const mineral = await Mineral.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    Object.keys(updateData).forEach((key) => {
+      if (key !== 'images' && key !== 'documents') {
+        mineral[key] = updateData[key];
+      }
+    });
 
-    if (!mineral) {
-      await cleanupUploadedFiles(req.files);
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No mineral found with that ID',
-      });
+    for (const imageId of parseIdList(req.body.deleteImageIds)) {
+      const image = mineral.images.id(imageId);
+      if (image) {
+        await deleteFileFromGitHub(image.url);
+        mineral.images.pull(imageId);
+      }
     }
+
+    for (const docId of parseIdList(req.body.deleteDocumentIds)) {
+      const document = mineral.documents.id(docId);
+      if (document) {
+        await deleteFileFromGitHub(document.path);
+        mineral.documents.pull(docId);
+      }
+    }
+
+    if (req.files && req.files.images) {
+      const newImages = await Promise.all(
+        req.files.images.map((file, index) => buildImageEntry(file, index, req.body, false))
+      );
+      mineral.images.push(...newImages);
+    }
+
+    if (req.files && req.files.documents) {
+      const newDocuments = await Promise.all(req.files.documents.map(buildDocumentEntry));
+      mineral.documents.push(...newDocuments);
+    }
+
+    await mineral.save();
 
     res.status(200).json({
       status: 'success',
@@ -468,9 +525,12 @@ router.delete('/:id', protect, restrictTo('admin'), validateObjectId, async (req
       });
     }
 
-    // Delete associated images from GitHub
-    const imageDeletePromises = mineral.images.map(image => deleteFileFromGitHub(image.url));
-    await Promise.all(imageDeletePromises);
+    // Delete associated images and documents from GitHub
+    const fileDeletePromises = [
+      ...mineral.images.map((image) => deleteFileFromGitHub(image.url)),
+      ...mineral.documents.map((doc) => deleteFileFromGitHub(doc.path))
+    ];
+    await Promise.all(fileDeletePromises);
     
     await Mineral.findByIdAndDelete(req.params.id);
 
@@ -555,6 +615,62 @@ router.delete('/:id/images/:imageId', protect, restrictTo('admin', 'mineral-mana
     res.status(200).json({
       status: 'success',
       message: 'Image deleted successfully',
+      data: { mineral }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Add documents to a mineral
+router.patch('/:id/documents', protect, restrictTo('admin', 'mineral-manager'), validateObjectId, upload.array('documents', 10), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No documents provided' });
+    }
+
+    const newDocuments = await Promise.all(req.files.map(buildDocumentEntry));
+
+    const mineral = await Mineral.findByIdAndUpdate(
+      req.params.id,
+      { $push: { documents: { $each: newDocuments } } },
+      { new: true }
+    );
+
+    if (!mineral) {
+      await Promise.all(newDocuments.map((doc) => deleteFileFromGitHub(doc.path)));
+      return res.status(404).json({ message: 'Mineral not found' });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { mineral }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Remove a document from a mineral
+router.delete('/:id/documents/:docId', protect, restrictTo('admin', 'mineral-manager'), validateObjectId, async (req, res) => {
+  try {
+    const mineral = await Mineral.findById(req.params.id);
+    if (!mineral) {
+      return res.status(404).json({ message: 'Mineral not found' });
+    }
+
+    const document = mineral.documents.id(req.params.docId);
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    await deleteFileFromGitHub(document.path);
+    mineral.documents.pull(req.params.docId);
+    await mineral.save();
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Document deleted successfully',
       data: { mineral }
     });
   } catch (err) {
