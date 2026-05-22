@@ -3,6 +3,7 @@ const router = express.Router();
 const Mineral = require('../models/Mineral');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { check, validationResult } = require('express-validator');
+const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const { Octokit } = require("@octokit/rest");
@@ -242,6 +243,12 @@ const validateUpdateMineral = [
   check('mohsHardness').optional().isInt({ min: 1, max: 10 }).withMessage('Mohs hardness must be between 1 and 10')
 ];
 
+const MINERAL_UPDATE_FIELDS = [
+  'name', 'mineralType', 'chemicalFormula', 'description', 'pricePerTonne', 'availableTonnes',
+  'hardness', 'density', 'color', 'luster', 'crystalSystem', 'cleavage', 'fracture', 'streak',
+  'transparency', 'rarity', 'miningMethod', 'isRadioactive', 'mohsHardness', 'specificGravity',
+];
+
 // Stats route
 router.get('/stats', async (req, res) => {
   try {
@@ -347,7 +354,8 @@ router.post('/', protect, restrictTo('admin', 'mineral-manager'), mineralUpload,
 
   try {
     // Verify createdBy user exists
-    const userExists = await mongoose.model('User').exists({ _id: req.body.createdBy });
+    const createdBy = resolveObjectId(req.body.createdBy) || req.body.createdBy;
+    const userExists = await mongoose.model('User').exists({ _id: createdBy });
     if (!userExists) {
       return res.status(400).json({ message: 'CreatedBy user does not exist' });
     }
@@ -355,6 +363,7 @@ router.post('/', protect, restrictTo('admin', 'mineral-manager'), mineralUpload,
     // Prepare mineral data
     const mineralData = {
       ...req.body,
+      createdBy,
       pricePerTonne: Number(req.body.pricePerTonne),
       availableTonnes: Number(req.body.availableTonnes),
       hardness: req.body.hardness ? Number(req.body.hardness) : undefined,
@@ -441,15 +450,19 @@ router.patch('/:id', protect, restrictTo('admin', 'mineral-manager'), validateOb
     }
 
     const reservedFields = ['deleteImageIds', 'deleteDocumentIds', 'coordinates', 'address', 'country', 'uses'];
-    const updateData = { ...req.body };
-    reservedFields.forEach((field) => delete updateData[field]);
+    const updateData = pickUpdateFields(req.body, MINERAL_UPDATE_FIELDS, {
+      skipFields: [...reservedFields, 'createdBy', 'owner', 'mineLocation'],
+    });
 
-    if (updateData.pricePerTonne) updateData.pricePerTonne = Number(updateData.pricePerTonne);
-    if (updateData.availableTonnes) updateData.availableTonnes = Number(updateData.availableTonnes);
-    if (updateData.hardness) updateData.hardness = Number(updateData.hardness);
-    if (updateData.density) updateData.density = Number(updateData.density);
-    if (updateData.mohsHardness) updateData.mohsHardness = Number(updateData.mohsHardness);
-    if (updateData.specificGravity) updateData.specificGravity = Number(updateData.specificGravity);
+    if (updateData.pricePerTonne !== undefined) updateData.pricePerTonne = Number(updateData.pricePerTonne);
+    if (updateData.availableTonnes !== undefined) updateData.availableTonnes = Number(updateData.availableTonnes);
+    if (updateData.hardness !== undefined) updateData.hardness = Number(updateData.hardness);
+    if (updateData.density !== undefined) updateData.density = Number(updateData.density);
+    if (updateData.mohsHardness !== undefined) updateData.mohsHardness = Number(updateData.mohsHardness);
+    if (updateData.specificGravity !== undefined) updateData.specificGravity = Number(updateData.specificGravity);
+    if (updateData.isRadioactive !== undefined) {
+      updateData.isRadioactive = updateData.isRadioactive === 'true' || updateData.isRadioactive === true;
+    }
 
     if (req.body.coordinates || req.body.address || req.body.country) {
       mineral.mineLocation = mineral.mineLocation || { type: 'Point', coordinates: [] };
@@ -464,11 +477,7 @@ router.patch('/:id', protect, restrictTo('admin', 'mineral-manager'), validateOb
       mineral.uses = req.body.uses.split(',').map((use) => use.trim());
     }
 
-    Object.keys(updateData).forEach((key) => {
-      if (key !== 'images' && key !== 'documents') {
-        mineral[key] = updateData[key];
-      }
-    });
+    Object.assign(mineral, updateData);
 
     for (const imageId of parseIdList(req.body.deleteImageIds)) {
       const image = mineral.images.id(imageId);
