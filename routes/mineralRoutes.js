@@ -7,6 +7,7 @@ const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields
 const mongoose = require('mongoose');
 const multer = require('multer');
 const { Octokit } = require("@octokit/rest");
+const { notifyAdminsNewMineral, sendEmailSafely } = require('../helpers/systemEmail');
 require('dotenv').config();
 
 // GitHub configuration
@@ -507,6 +508,12 @@ router.post('/', protect, restrictTo('admin', 'mineral-manager'), mineralUpload,
 
     const mineral = new Mineral(mineralData);
     await mineral.save();
+
+    const createdByUser = await mongoose.model('User').findById(createdBy).select('firstName lastName email');
+    sendEmailSafely(
+      () => notifyAdminsNewMineral(mineral, createdByUser),
+      `admin notification for new mineral ${mineral._id}`
+    );
     
     res.status(201).json({
       status: 'success',

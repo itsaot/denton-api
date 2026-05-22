@@ -25,8 +25,22 @@ module.exports = {
       },
       responses: {
         201: {
-          description: 'Created',
-          content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthResponse' } } },
+          description: 'Created; verification email sent when SMTP is configured',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  _id: { type: 'string' },
+                  firstName: { type: 'string' },
+                  email: { type: 'string' },
+                  role: { type: 'string' },
+                  isVerified: { type: 'boolean' },
+                  message: { type: 'string' },
+                },
+              },
+            },
+          },
         },
         400: { description: 'User exists or validation error' },
         500: { description: 'Server error' },
@@ -59,23 +73,93 @@ module.exports = {
           content: { 'application/json': { schema: { $ref: '#/components/schemas/AuthResponse' } } },
         },
         401: { description: 'Invalid credentials' },
+        403: { description: 'Email not verified' },
       },
+    },
+  },
+  '/api/auth/verify-email': {
+    get: {
+      tags: ['Auth'],
+      summary: 'Verify email address',
+      security: [],
+      parameters: [
+        {
+          name: 'token',
+          in: 'query',
+          required: true,
+          schema: { type: 'string' },
+        },
+      ],
+      responses: {
+        200: { description: 'Email verified; JWT returned' },
+        400: { description: 'Invalid or expired token' },
+      },
+    },
+  },
+  '/api/auth/resend-verification': {
+    post: {
+      tags: ['Auth'],
+      summary: 'Resend verification email',
+      security: [],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['email'],
+              properties: { email: { type: 'string', format: 'email' } },
+            },
+          },
+        },
+      },
+      responses: { 200: { description: 'Generic success message' } },
     },
   },
   '/api/auth/forgot-password': {
     post: {
       tags: ['Auth'],
-      summary: 'Forgot password (placeholder)',
+      summary: 'Request password reset email',
       security: [],
-      responses: { 200: { description: 'Plain text response' } },
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['email'],
+              properties: { email: { type: 'string', format: 'email' } },
+            },
+          },
+        },
+      },
+      responses: { 200: { description: 'Generic success message (email sent if account exists)' } },
     },
   },
   '/api/auth/reset-password': {
     post: {
       tags: ['Auth'],
-      summary: 'Reset password (placeholder)',
+      summary: 'Reset password with token from email',
       security: [],
-      responses: { 200: { description: 'Plain text response' } },
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['token', 'password'],
+              properties: {
+                token: { type: 'string' },
+                password: { type: 'string', minLength: 6 },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        200: { description: 'Password updated' },
+        400: { description: 'Invalid or expired token' },
+      },
     },
   },
 };

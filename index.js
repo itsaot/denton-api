@@ -19,23 +19,39 @@ const swaggerSpec = require('./config/swagger');
 const cors = require('cors');
 const morgan = require('morgan');
 const multer = require('multer');
+const {
+  corsOptions,
+  createHelmetMiddleware,
+  authRateLimiter,
+  apiRateLimiter,
+  assertProductionSecrets,
+} = require('./middleware/security');
 
 // Load environment variables first
 dotenv.config();
+assertProductionSecrets();
 
 // Initialize express app
 const app = express();
 
+// Render / reverse-proxy: required for rate limits and secure cookies behind TLS
+app.set('trust proxy', 1);
+
 // Connect to database
 connectDB();
 
-// Middleware setup
-app.use(cors());
-app.options('*', cors());
+// Security middleware
+app.use(createHelmetMiddleware());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.disable('x-powered-by');
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(morgan(':method :url :status :res[content-length] - :response-time ms'));
+app.use('/api/auth', authRateLimiter);
+app.use('/api', apiRateLimiter);
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(
+  morgan(process.env.NODE_ENV === 'production' ? 'combined' : ':method :url :status :res[content-length] - :response-time ms')
+);
 
 // Ensure uploads directory exists (for local files if needed)
 const uploadDir = path.join(__dirname, 'uploads');
@@ -184,24 +200,32 @@ app.get('/api/protected', protect, (req, res) =>
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Error:', err.stack);
-  
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('Error:', err.stack);
+  } else {
+    console.error('Error:', err.message);
+  }
+
   if (err instanceof multer.MulterError) {
     if (err.code === 'FILE_TOO_LARGE') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         status: 'fail',
-        message: 'File too large. Maximum size is 10MB.' 
+        message: 'File too large. Maximum size is 10MB.',
       });
     }
-    return res.status(400).json({ 
+    return res.status(400).json({
       status: 'fail',
-      message: err.message 
+      message: err.message,
     });
   }
-  
-  res.status(500).json({ 
+
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
     status: 'error',
-    message: err.message || 'Something went wrong!' 
+    message:
+      process.env.NODE_ENV === 'production' && status === 500
+        ? 'Something went wrong!'
+        : err.message || 'Something went wrong!',
   });
 });
 

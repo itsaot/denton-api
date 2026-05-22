@@ -24,7 +24,11 @@ const userSchema = new mongoose.Schema({
     interests: [String],
     budgetRange: { min: Number, max: Number }
   },
-  isVerified: { type: Boolean, default: false }
+  isVerified: { type: Boolean, default: false },
+  emailVerificationToken: { type: String, select: false },
+  emailVerificationExpires: { type: Date, select: false },
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

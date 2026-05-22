@@ -44,15 +44,11 @@ module.exports = {
     ].join('\n'),
   },
   servers: [
-    { url: 'http://localhost:5000', description: 'Local development' },
     {
-      url: '{protocol}://{host}',
-      description: 'Custom host',
-      variables: {
-        protocol: { default: 'http', enum: ['http', 'https'] },
-        host: { default: 'localhost:5000' },
-      },
+      url: 'https://denton-api.onrender.com',
+      description: 'Production (Render)',
     },
+    { url: 'http://localhost:5000', description: 'Local development' },
   ],
   tags: [
     { name: 'System', description: 'Health, JWT test, standalone file uploads' },

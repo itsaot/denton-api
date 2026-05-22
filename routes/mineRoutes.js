@@ -6,6 +6,7 @@ const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const { Octokit } = require("@octokit/rest");
+const { notifyAdminsNewMine, sendEmailSafely } = require('../helpers/systemEmail');
 require('dotenv').config();
 
 // GitHub configuration
@@ -246,6 +247,13 @@ router.post('/', upload.fields([
 
     const mine = new Mine(mineData);
     await mine.save();
+
+    const owner = await mongoose.model('User').findById(ownerId).select('firstName lastName email');
+    sendEmailSafely(
+      () => notifyAdminsNewMine(mine, owner),
+      `admin notification for new mine ${mine._id}`
+    );
+
     res.status(201).json(mine);
   } catch (err) {
     await cleanupUploadedFiles(req.files);
