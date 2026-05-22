@@ -1,5 +1,14 @@
 const mongoose = require('mongoose');
 
+const documentSchema = new mongoose.Schema({
+  filename: String,
+  originalName: String,
+  path: String,
+  mimetype: String,
+  size: Number,
+  uploadedAt: { type: Date, default: Date.now }
+});
+
 const mineralSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -110,6 +119,7 @@ const mineralSchema = new mongoose.Schema({
       default: false
     }
   }],
+  documents: [documentSchema],
   isRadioactive: {
     type: Boolean,
     default: false

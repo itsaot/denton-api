@@ -6,6 +6,7 @@ module.exports = merge(
   require('./users'),
   require('./mines'),
   require('./minerals'),
+  require('./yellowMachines'),
   require('./offers'),
   require('./messages'),
   require('./analytics'),

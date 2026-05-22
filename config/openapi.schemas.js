@@ -1,11 +1,12 @@
 /**
  * Reusable OpenAPI 3.0 component schemas for Denton API.
+ * Structured for frontend TypeScript clients and Swagger UI "Try it out".
  */
 module.exports = {
   ErrorMessage: {
     type: 'object',
     properties: {
-      message: { type: 'string' },
+      message: { type: 'string', example: 'Mine not found' },
       status: { type: 'string', example: 'fail' },
     },
   },
@@ -29,16 +30,16 @@ module.exports = {
     type: 'object',
     properties: {
       _id: { type: 'string', example: '507f1f77bcf86cd799439011' },
-      firstName: { type: 'string' },
-      lastName: { type: 'string' },
-      email: { type: 'string', format: 'email' },
+      firstName: { type: 'string', example: 'Jane' },
+      lastName: { type: 'string', example: 'Doe' },
+      email: { type: 'string', format: 'email', example: 'jane@example.com' },
       contactNumber: { type: 'string' },
       role: {
         type: 'string',
         enum: ['mine_owner', 'mineral-manager', 'investor', 'consultant', 'admin'],
       },
-      businessDetails: { type: 'object' },
-      preferences: { type: 'object' },
+      businessDetails: { type: 'object', additionalProperties: true },
+      preferences: { type: 'object', additionalProperties: true },
       isVerified: { type: 'boolean' },
       createdAt: { type: 'string', format: 'date-time' },
       updatedAt: { type: 'string', format: 'date-time' },
@@ -51,7 +52,89 @@ module.exports = {
       firstName: { type: 'string' },
       email: { type: 'string' },
       role: { type: 'string' },
-      token: { type: 'string', description: 'JWT bearer token' },
+      token: { type: 'string', description: 'JWT — store and send as Authorization: Bearer <token>' },
+    },
+  },
+  FileAttachment: {
+    type: 'object',
+    description: 'Uploaded document or media file stored on GitHub (path is the public URL).',
+    properties: {
+      _id: { type: 'string', description: 'Use this id in deleteDocumentIds / deleteMediaIds on update' },
+      filename: { type: 'string', example: 'report-1715000000000-123456789.pdf' },
+      originalName: { type: 'string', example: 'geology-report.pdf' },
+      path: { type: 'string', format: 'uri', description: 'Public file URL for download/display' },
+      mimetype: { type: 'string', example: 'application/pdf' },
+      size: { type: 'integer', example: 245000 },
+      uploadedAt: { type: 'string', format: 'date-time' },
+    },
+  },
+  MineralImage: {
+    type: 'object',
+    properties: {
+      _id: { type: 'string', description: 'Use in deleteImageIds on PATCH /api/minerals/{id}' },
+      url: { type: 'string', format: 'uri' },
+      caption: { type: 'string' },
+      isPrimary: { type: 'boolean', default: false },
+    },
+  },
+  GeoPoint: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['Point'], example: 'Point' },
+      coordinates: {
+        type: 'array',
+        items: { type: 'number' },
+        minItems: 2,
+        maxItems: 2,
+        description: '[longitude, latitude]',
+        example: [28.0473, -26.2041],
+      },
+      address: { type: 'string' },
+      country: { type: 'string' },
+    },
+  },
+  Mineral: {
+    type: 'object',
+    properties: {
+      _id: { type: 'string' },
+      name: { type: 'string', example: 'Gold' },
+      mineralType: {
+        type: 'string',
+        enum: ['metallic', 'non-metallic', 'precious', 'industrial', 'energy', 'gemstone'],
+      },
+      chemicalFormula: { type: 'string', example: 'Au' },
+      description: { type: 'string' },
+      pricePerTonne: { type: 'number', example: 65000 },
+      availableTonnes: { type: 'number', example: 120 },
+      hardness: { type: 'number', minimum: 1, maximum: 10 },
+      density: { type: 'number' },
+      color: { type: 'string' },
+      luster: {
+        type: 'string',
+        enum: ['metallic', 'submetallic', 'vitreous', 'pearly', 'resinous', 'silky', 'greasy', 'adamantine', 'dull'],
+      },
+      crystalSystem: {
+        type: 'string',
+        enum: ['cubic', 'tetragonal', 'orthorhombic', 'hexagonal', 'trigonal', 'monoclinic', 'triclinic', 'amorphous'],
+      },
+      cleavage: { type: 'string', enum: ['perfect', 'good', 'distinct', 'imperfect', 'poor', 'none'] },
+      fracture: { type: 'string', enum: ['conchoidal', 'uneven', 'fibrous', 'hackly', 'splintery', 'earthy'] },
+      streak: { type: 'string' },
+      transparency: { type: 'string', enum: ['transparent', 'translucent', 'opaque'] },
+      rarity: { type: 'string', enum: ['common', 'uncommon', 'rare', 'very-rare'] },
+      mineLocation: { $ref: '#/components/schemas/GeoPoint' },
+      miningMethod: {
+        type: 'string',
+        enum: ['open-pit', 'underground', 'placer', 'in-situ', 'mountaintop-removal'],
+      },
+      uses: { type: 'array', items: { type: 'string' } },
+      images: { type: 'array', items: { $ref: '#/components/schemas/MineralImage' } },
+      documents: { type: 'array', items: { $ref: '#/components/schemas/FileAttachment' } },
+      isRadioactive: { type: 'boolean' },
+      mohsHardness: { type: 'integer', minimum: 1, maximum: 10 },
+      specificGravity: { type: 'number' },
+      createdBy: { type: 'string', description: 'User ObjectId' },
+      lastUpdatedAt: { type: 'string', format: 'date-time' },
     },
   },
   Mine: {
@@ -59,20 +142,57 @@ module.exports = {
     properties: {
       _id: { type: 'string' },
       owner: {
-        description: 'Owner user id (string) or populated user object',
-        oneOf: [{ type: 'string' }, { type: 'object' }],
+        description: 'Owner user id (string) or populated User',
+        oneOf: [{ type: 'string' }, { $ref: '#/components/schemas/User' }],
       },
-      name: { type: 'string' },
-      location: { type: 'string' },
-      commodityType: { type: 'string' },
+      name: { type: 'string', example: 'West Rand Mine' },
+      location: { type: 'string', example: 'Johannesburg, SA' },
+      commodityType: { type: 'string', example: 'Gold' },
       status: {
         type: 'string',
         enum: ['Active', 'Idle', 'Exploration', 'Development'],
       },
-      price: { type: 'number' },
+      price: { type: 'number', example: 2500000 },
       description: { type: 'string' },
-      documents: { type: 'array', items: { type: 'object' } },
-      media: { type: 'array', items: { type: 'object' } },
+      documents: { type: 'array', items: { $ref: '#/components/schemas/FileAttachment' } },
+      media: { type: 'array', items: { $ref: '#/components/schemas/FileAttachment' }, description: 'Pictures / images' },
+      createdAt: { type: 'string', format: 'date-time' },
+      updatedAt: { type: 'string', format: 'date-time' },
+    },
+  },
+  RentalInfo: {
+    type: 'object',
+    properties: {
+      available: { type: 'boolean', example: true },
+      duration: { type: 'string', example: '6 months', description: 'How long the machine is available for rental' },
+    },
+  },
+  MachineRates: {
+    type: 'object',
+    description: 'Rental or usage rates (currency units as stored by API)',
+    properties: {
+      hourly: { type: 'number', example: 150 },
+      daily: { type: 'number', example: 1200 },
+      weekly: { type: 'number', example: 7000 },
+      monthly: { type: 'number', example: 25000 },
+    },
+  },
+  YellowMachine: {
+    type: 'object',
+    properties: {
+      _id: { type: 'string' },
+      owner: { oneOf: [{ type: 'string' }, { $ref: '#/components/schemas/User' }] },
+      name: { type: 'string', example: 'CAT 320 Excavator' },
+      establishmentFee: { type: 'number', example: 5000 },
+      brand: { type: 'string', example: 'Caterpillar' },
+      age: { type: 'number', example: 8, description: 'Machine age in years' },
+      mileage: { type: 'number', example: 12500 },
+      rental: { $ref: '#/components/schemas/RentalInfo' },
+      forSale: { type: 'boolean', example: false },
+      rates: { $ref: '#/components/schemas/MachineRates' },
+      description: { type: 'string' },
+      documents: { type: 'array', items: { $ref: '#/components/schemas/FileAttachment' } },
+      media: { type: 'array', items: { $ref: '#/components/schemas/FileAttachment' }, description: 'Machine pictures' },
       createdAt: { type: 'string', format: 'date-time' },
       updatedAt: { type: 'string', format: 'date-time' },
     },
@@ -165,7 +285,7 @@ module.exports = {
       data: {
         type: 'object',
         properties: {
-          minerals: { type: 'array', items: { type: 'object' } },
+          minerals: { type: 'array', items: { $ref: '#/components/schemas/Mineral' } },
         },
       },
     },
@@ -173,8 +293,19 @@ module.exports = {
   MineralSingleResponse: {
     type: 'object',
     properties: {
-      status: { type: 'string' },
-      data: { type: 'object', properties: { mineral: { type: 'object' } } },
+      status: { type: 'string', example: 'success' },
+      data: {
+        type: 'object',
+        properties: {
+          mineral: { $ref: '#/components/schemas/Mineral' },
+        },
+      },
+    },
+  },
+  DeleteMessageResponse: {
+    type: 'object',
+    properties: {
+      message: { type: 'string', example: 'Document deleted successfully' },
     },
   },
   UploadSuccess: {
@@ -189,6 +320,31 @@ module.exports = {
           filename: { type: 'string' },
           size: { type: 'integer' },
           mimetype: { type: 'string' },
+        },
+      },
+    },
+  },
+  UploadMultipleSuccess: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', example: 'success' },
+      data: {
+        type: 'object',
+        properties: {
+          files: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                fileUrl: { type: 'string', format: 'uri' },
+                originalName: { type: 'string' },
+                filename: { type: 'string' },
+                size: { type: 'integer' },
+                mimetype: { type: 'string' },
+              },
+            },
+          },
+          count: { type: 'integer' },
         },
       },
     },
@@ -260,10 +416,7 @@ module.exports = {
       provider: { type: 'string', example: 'ozow' },
       outcome: { type: 'string', example: 'notify' },
       verified: { type: 'boolean' },
-      callback: {
-        type: 'object',
-        additionalProperties: true,
-      },
+      callback: { type: 'object', additionalProperties: true },
       transaction: {
         oneOf: [
           { type: 'array', items: { $ref: '#/components/schemas/OzowTransaction' } },

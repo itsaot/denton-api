@@ -6,6 +6,7 @@ const mineRoutes = require('./routes/mineRoutes');
 const offerRoutes = require('./routes/offerRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const mineralRoutes = require('./routes/mineralRoutes');
+const yellowMachineRoutes = require('./routes/yellowMachineRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const userRoutes = require('./routes/user');
@@ -48,8 +49,21 @@ app.get('/openapi.json', (req, res) => {
   res.type('application/json').send(swaggerSpec);
 });
 
-// Swagger documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Swagger documentation (frontend-friendly: persist auth, filter, try-it-out)
+app.use(
+  '/api-docs',
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'Denton API — Frontend Reference',
+    swaggerOptions: {
+      persistAuthorization: true,
+      docExpansion: 'list',
+      filter: true,
+      tryItOutEnabled: true,
+      displayRequestDuration: true,
+    },
+  })
+);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -60,6 +74,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/minerals', mineralRoutes);
+app.use('/api/yellow-machines', yellowMachineRoutes);
 
 // File upload route using GitHub upload
 app.post('/api/upload', protect, uploadMiddleware.upload.single('file'), async (req, res) => {

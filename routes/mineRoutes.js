@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Mine = require('../models/Mine');
+const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -137,6 +138,17 @@ const validateObjectId = (req, res, next) => {
   next();
 };
 
+const parseIdList = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [String(value)];
+  } catch {
+    return String(value).split(',').map((s) => s.trim()).filter(Boolean);
+  }
+};
+
 // Validation middleware for mine creation
 const validateCreateMine = [
   check('owner').notEmpty().withMessage('Owner ID is required'),
@@ -156,6 +168,8 @@ const validateUpdateMine = [
   check('status').isIn(['Active', 'Idle', 'Exploration', 'Development']).optional()
 ];
 
+const MINE_UPDATE_FIELDS = ['name', 'location', 'commodityType', 'status', 'price', 'description'];
+
 // Create a new mine with file uploads
 router.post('/', upload.fields([
   { name: 'documents', maxCount: 10 },
@@ -171,7 +185,8 @@ router.post('/', upload.fields([
 
   try {
     // Verify owner exists
-    const ownerExists = await mongoose.model('User').exists({ _id: req.body.owner });
+    const ownerId = resolveObjectId(req.body.owner) || req.body.owner;
+    const ownerExists = await mongoose.model('User').exists({ _id: ownerId });
     if (!ownerExists) {
       return res.status(400).json({ message: 'Owner user does not exist' });
     }
@@ -179,6 +194,7 @@ router.post('/', upload.fields([
     // Prepare mine data
     const mineData = {
       ...req.body,
+      owner: ownerId,
       price: Number(req.body.price)
     };
 
@@ -274,7 +290,33 @@ router.get('/:id', validateObjectId, async (req, res) => {
   }
 });
 
-// Update a mine with optional file uploads
+const buildDocumentEntry = async (file) => {
+  const fileExtension = FILE_TYPE_MAP[file.mimetype];
+  const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1e9)}.${fileExtension}`;
+  const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
+  return {
+    filename: fileName,
+    originalName: file.originalname,
+    path: githubUrl,
+    mimetype: file.mimetype,
+    size: file.size
+  };
+};
+
+const buildMediaEntry = async (file) => {
+  const fileExtension = FILE_TYPE_MAP[file.mimetype];
+  const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1e9)}.${fileExtension}`;
+  const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
+  return {
+    filename: fileName,
+    originalName: file.originalname,
+    path: githubUrl,
+    mimetype: file.mimetype,
+    size: file.size
+  };
+};
+
+// Update a mine (fields, add/remove documents and media)
 router.put('/:id', validateObjectId, upload.fields([
   { name: 'documents', maxCount: 10 },
   { name: 'media', maxCount: 10 }
@@ -285,68 +327,47 @@ router.put('/:id', validateObjectId, upload.fields([
   }
 
   try {
-    const updateData = { ...req.body };
-    if (updateData.price) updateData.price = Number(updateData.price);
-
-    // Process new documents if any
-    if (req.files && req.files.documents) {
-      const documentPromises = req.files.documents.map(async (file) => {
-        if (!FILE_TYPE_MAP[file.mimetype]) {
-          throw new Error(`Invalid file type: ${file.mimetype}`);
-        }
-        
-        const fileExtension = FILE_TYPE_MAP[file.mimetype];
-        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
-        const githubUrl = await uploadFileToGitHub(file, fileName, 'documents');
-        
-        return {
-          filename: fileName,
-          originalName: file.originalname,
-          path: githubUrl,
-          mimetype: file.mimetype,
-          size: file.size
-        };
-      });
-
-      const newDocuments = await Promise.all(documentPromises);
-      updateData.$push = { documents: { $each: newDocuments } };
-    }
-
-    // Process new media if any
-    if (req.files && req.files.media) {
-      const mediaPromises = req.files.media.map(async (file) => {
-        if (!FILE_TYPE_MAP[file.mimetype]) {
-          throw new Error(`Invalid file type: ${file.mimetype}`);
-        }
-        
-        const fileExtension = FILE_TYPE_MAP[file.mimetype];
-        const fileName = `${file.originalname.split(' ').join('-')}-${Date.now()}-${Math.round(Math.random() * 1E9)}.${fileExtension}`;
-        const githubUrl = await uploadFileToGitHub(file, fileName, 'media');
-        
-        return {
-          filename: fileName,
-          originalName: file.originalname,
-          path: githubUrl,
-          mimetype: file.mimetype,
-          size: file.size
-        };
-      });
-
-      const newMedia = await Promise.all(mediaPromises);
-      updateData.$push = updateData.$push || {};
-      updateData.$push.media = { $each: newMedia };
-    }
-
-    const mine = await Mine.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true }
-    ).populate('owner', 'firstName lastName email role');
-
+    const mine = await Mine.findById(req.params.id);
     if (!mine) {
-      await cleanupUploadedFiles(req.files);
       return res.status(404).json({ message: 'Mine not found' });
     }
+
+    for (const docId of parseIdList(req.body.deleteDocumentIds)) {
+      const document = mine.documents.id(docId);
+      if (document) {
+        await deleteFileFromGitHub(document.path);
+        mine.documents.pull(docId);
+      }
+    }
+
+    for (const mediaId of parseIdList(req.body.deleteMediaIds)) {
+      const mediaItem = mine.media.id(mediaId);
+      if (mediaItem) {
+        await deleteFileFromGitHub(mediaItem.path);
+        mine.media.pull(mediaId);
+      }
+    }
+
+    const reservedFields = ['deleteDocumentIds', 'deleteMediaIds'];
+    const updateData = pickUpdateFields(req.body, MINE_UPDATE_FIELDS, {
+      skipFields: [...reservedFields, 'owner'],
+    });
+
+    if (updateData.price !== undefined) updateData.price = Number(updateData.price);
+    Object.assign(mine, updateData);
+
+    if (req.files && req.files.documents) {
+      const newDocuments = await Promise.all(req.files.documents.map(buildDocumentEntry));
+      mine.documents.push(...newDocuments);
+    }
+
+    if (req.files && req.files.media) {
+      const newMedia = await Promise.all(req.files.media.map(buildMediaEntry));
+      mine.media.push(...newMedia);
+    }
+
+    await mine.save();
+    await mine.populate('owner', 'firstName lastName email role');
 
     res.json(mine);
   } catch (err) {
