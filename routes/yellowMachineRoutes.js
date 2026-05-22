@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const YellowMachine = require('../models/YellowMachine');
+const { isSerializedNestedValue, resolveObjectId } = require('../utils/pickUpdateFields');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -179,9 +180,9 @@ const validateUpdateYellowMachine = [
 const parseMachineBody = (body) => {
   const data = {};
 
-  if (body.name !== undefined) data.name = body.name;
-  if (body.brand !== undefined) data.brand = body.brand;
-  if (body.description !== undefined) data.description = body.description;
+  if (body.name !== undefined && !isSerializedNestedValue(body.name)) data.name = body.name;
+  if (body.brand !== undefined && !isSerializedNestedValue(body.brand)) data.brand = body.brand;
+  if (body.description !== undefined && !isSerializedNestedValue(body.description)) data.description = body.description;
   if (body.establishmentFee !== undefined) data.establishmentFee = Number(body.establishmentFee);
   if (body.age !== undefined) data.age = Number(body.age);
   if (body.mileage !== undefined) data.mileage = Number(body.mileage);
@@ -216,13 +217,14 @@ router.post('/', upload.fields([
   }
 
   try {
-    const ownerExists = await mongoose.model('User').exists({ _id: req.body.owner });
+    const ownerId = resolveObjectId(req.body.owner) || req.body.owner;
+    const ownerExists = await mongoose.model('User').exists({ _id: ownerId });
     if (!ownerExists) {
       return res.status(400).json({ message: 'Owner user does not exist' });
     }
 
     const machineData = {
-      owner: req.body.owner,
+      owner: ownerId,
       ...parseMachineBody(req.body),
       documents: [],
       media: []
