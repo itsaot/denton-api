@@ -35,7 +35,7 @@ const upload = multer({
   },
 });
 
-// Create a new mineral with image uploads - Updated to handle both 'images' and 'image' field names
+// Create a new mineral with image uploads
 const uploadFields = upload.fields([
   { name: 'images', maxCount: 10 },
   { name: 'image', maxCount: 10 }
@@ -109,17 +109,127 @@ const cleanupUploadedFiles = async (files) => {
   if (!files) return;
   
   try {
-    if (files.images) {
-      for (const file of files.images) {
-        if (file.githubUrl) {
-          await deleteFileFromGitHub(file.githubUrl).catch(console.error);
-        }
+    const uploadedFiles = Array.isArray(files)
+      ? files
+      : [...(files.images || []), ...(files.image || [])];
+
+    for (const file of uploadedFiles) {
+      if (file.githubUrl) {
+        await deleteFileFromGitHub(file.githubUrl).catch(console.error);
       }
     }
   } catch (error) {
     console.error('Error cleaning up files:', error);
   }
 };
+
+const getUploadedImages = (files) => {
+  if (!files) {
+    return [];
+  }
+
+  if (Array.isArray(files)) {
+    return files;
+  }
+
+  return [...(files.images || []), ...(files.image || [])];
+};
+
+const parseCoordinatesInput = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(Number);
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    return JSON.parse(value).map(Number);
+  }
+
+  return null;
+};
+
+const getCoordinatesInput = (body) => (
+  body.coordinates
+  || body['mineLocation.coordinates']
+  || body.mineLocation?.coordinates
+);
+
+const hasValidCoordinates = (value) => {
+  try {
+    const coordinates = parseCoordinatesInput(value);
+
+    return Array.isArray(coordinates)
+      && coordinates.length === 2
+      && coordinates.every((coordinate) => Number.isFinite(coordinate));
+  } catch (error) {
+    return false;
+  }
+};
+
+const getCreatedByValue = (req) => req.body.createdBy || req.user?._id?.toString();
+
+const buildUsesArray = (uses) => {
+  if (Array.isArray(uses)) {
+    return uses.map((use) => String(use).trim()).filter(Boolean);
+  }
+
+  if (typeof uses === 'string' && uses.trim()) {
+    return uses.split(',').map((use) => use.trim()).filter(Boolean);
+  }
+
+  return [];
+};
+
+const parseNumericField = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) ? parsedValue : value;
+};
+
+const parseBooleanField = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    if (value.toLowerCase() === 'true') {
+      return true;
+    }
+
+    if (value.toLowerCase() === 'false') {
+      return false;
+    }
+  }
+
+  return value;
+};
+
+const buildMineLocation = (body) => ({
+  type: 'Point',
+  coordinates: parseCoordinatesInput(getCoordinatesInput(body)),
+  address: body.address || body['mineLocation.address'],
+  country: body.country || body['mineLocation.country']
+});
+
+const buildBaseMineralData = (body, req) => ({
+  ...body,
+  createdBy: getCreatedByValue(req),
+  pricePerTonne: parseNumericField(body.pricePerTonne),
+  availableTonnes: parseNumericField(body.availableTonnes),
+  hardness: parseNumericField(body.hardness),
+  density: parseNumericField(body.density),
+  mohsHardness: parseNumericField(body.mohsHardness),
+  specificGravity: parseNumericField(body.specificGravity),
+  isRadioactive: parseBooleanField(body.isRadioactive),
+  mineLocation: buildMineLocation(body),
+  uses: buildUsesArray(body.uses)
+});
 
 // Middleware for validating ObjectId
 const validateObjectId = (req, res, next) => {
@@ -172,8 +282,13 @@ const validateCreateMineral = [
   check('pricePerTonne').isNumeric().withMessage('Price per tonne must be a number'),
   check('availableTonnes').isNumeric().withMessage('Available tonnes must be a number'),
   check('color').notEmpty().withMessage('Color description is required'),
-  check('mineLocation.coordinates').isArray().withMessage('Coordinates must be an array'),
-  check('createdBy').notEmpty().withMessage('CreatedBy user ID is required')
+  check('coordinates')
+    .custom((_, { req }) => hasValidCoordinates(getCoordinatesInput(req.body)))
+    .withMessage('Coordinates must be a JSON array like [longitude, latitude]'),
+  check('createdBy')
+    .optional({ values: 'falsy' })
+    .isMongoId()
+    .withMessage('CreatedBy user ID must be a valid MongoDB ObjectId')
 ];
 
 // Validation middleware for mineral update
@@ -276,7 +391,7 @@ router.get('/', async (req, res) => {
 });
 
 // Create a new mineral with image uploads
-router.post('/', protect, restrictTo('admin', 'mineral-manager'), upload.array('images', 10), validateCreateMineral, async (req, res) => {
+router.post('/', protect, restrictTo('admin', 'mineral-manager'), uploadFields, validateCreateMineral, async (req, res) => {
   console.log('Request body:', req.body);
   console.log('Request files:', req.files);
   const errors = validationResult(req);
@@ -285,34 +400,25 @@ router.post('/', protect, restrictTo('admin', 'mineral-manager'), upload.array('
   }
 
   try {
+    const createdBy = getCreatedByValue(req);
+
     // Verify createdBy user exists
-    const userExists = await mongoose.model('User').exists({ _id: req.body.createdBy });
+    const userExists = await mongoose.model('User').exists({ _id: createdBy });
     if (!userExists) {
       return res.status(400).json({ message: 'CreatedBy user does not exist' });
     }
 
     // Prepare mineral data
     const mineralData = {
-      ...req.body,
-      pricePerTonne: Number(req.body.pricePerTonne),
-      availableTonnes: Number(req.body.availableTonnes),
-      hardness: req.body.hardness ? Number(req.body.hardness) : undefined,
-      density: req.body.density ? Number(req.body.density) : undefined,
-      mohsHardness: req.body.mohsHardness ? Number(req.body.mohsHardness) : undefined,
-      specificGravity: req.body.specificGravity ? Number(req.body.specificGravity) : undefined,
-      mineLocation: {
-        type: 'Point',
-        coordinates: JSON.parse(req.body.coordinates || req.body.mineLocation?.coordinates),
-        address: req.body.address,
-        country: req.body.country
-      },
-      uses: req.body.uses ? req.body.uses.split(',').map(use => use.trim()) : [],
+      ...buildBaseMineralData(req.body, req),
       images: []
     };
 
     // Process uploaded images
-    if (req.files && req.files.length > 0) {
-      const imagePromises = req.files.map(async (file, index) => {
+    const uploadedImages = getUploadedImages(req.files);
+
+    if (uploadedImages.length > 0) {
+      const imagePromises = uploadedImages.map(async (file, index) => {
         if (!FILE_TYPE_MAP[file.mimetype]) {
           throw new Error(`Invalid file type: ${file.mimetype}`);
         }
@@ -382,29 +488,33 @@ router.patch('/:id', protect, restrictTo('admin', 'mineral-manager'), validateOb
     const updateData = { ...req.body };
     
     // Convert numeric fields
-    if (updateData.pricePerTonne) updateData.pricePerTonne = Number(updateData.pricePerTonne);
-    if (updateData.availableTonnes) updateData.availableTonnes = Number(updateData.availableTonnes);
-    if (updateData.hardness) updateData.hardness = Number(updateData.hardness);
-    if (updateData.density) updateData.density = Number(updateData.density);
-    if (updateData.mohsHardness) updateData.mohsHardness = Number(updateData.mohsHardness);
-    if (updateData.specificGravity) updateData.specificGravity = Number(updateData.specificGravity);
+    if (updateData.pricePerTonne !== undefined) updateData.pricePerTonne = parseNumericField(updateData.pricePerTonne);
+    if (updateData.availableTonnes !== undefined) updateData.availableTonnes = parseNumericField(updateData.availableTonnes);
+    if (updateData.hardness !== undefined) updateData.hardness = parseNumericField(updateData.hardness);
+    if (updateData.density !== undefined) updateData.density = parseNumericField(updateData.density);
+    if (updateData.mohsHardness !== undefined) updateData.mohsHardness = parseNumericField(updateData.mohsHardness);
+    if (updateData.specificGravity !== undefined) updateData.specificGravity = parseNumericField(updateData.specificGravity);
+    if (updateData.isRadioactive !== undefined) updateData.isRadioactive = parseBooleanField(updateData.isRadioactive);
     
     // Handle mineLocation update
-    if (updateData.coordinates || updateData.address || updateData.country) {
+    if (getCoordinatesInput(updateData) || updateData.address || updateData.country || updateData['mineLocation.address'] || updateData['mineLocation.country']) {
       updateData.mineLocation = {
         type: 'Point',
-        coordinates: updateData.coordinates ? JSON.parse(updateData.coordinates) : undefined,
-        address: updateData.address,
-        country: updateData.country
+        coordinates: getCoordinatesInput(updateData) ? parseCoordinatesInput(getCoordinatesInput(updateData)) : undefined,
+        address: updateData.address || updateData['mineLocation.address'],
+        country: updateData.country || updateData['mineLocation.country']
       };
       delete updateData.coordinates;
+      delete updateData['mineLocation.coordinates'];
       delete updateData.address;
       delete updateData.country;
+      delete updateData['mineLocation.address'];
+      delete updateData['mineLocation.country'];
     }
     
     // Handle uses array
     if (updateData.uses) {
-      updateData.uses = updateData.uses.split(',').map(use => use.trim());
+      updateData.uses = buildUsesArray(updateData.uses);
     }
 
     // Process new images if any
