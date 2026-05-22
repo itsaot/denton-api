@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Mine = require('../models/Mine');
+const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -167,6 +168,8 @@ const validateUpdateMine = [
   check('status').isIn(['Active', 'Idle', 'Exploration', 'Development']).optional()
 ];
 
+const MINE_UPDATE_FIELDS = ['name', 'location', 'commodityType', 'status', 'price', 'description'];
+
 // Create a new mine with file uploads
 router.post('/', upload.fields([
   { name: 'documents', maxCount: 10 },
@@ -182,7 +185,8 @@ router.post('/', upload.fields([
 
   try {
     // Verify owner exists
-    const ownerExists = await mongoose.model('User').exists({ _id: req.body.owner });
+    const ownerId = resolveObjectId(req.body.owner) || req.body.owner;
+    const ownerExists = await mongoose.model('User').exists({ _id: ownerId });
     if (!ownerExists) {
       return res.status(400).json({ message: 'Owner user does not exist' });
     }
@@ -190,6 +194,7 @@ router.post('/', upload.fields([
     // Prepare mine data
     const mineData = {
       ...req.body,
+      owner: ownerId,
       price: Number(req.body.price)
     };
 
@@ -344,11 +349,11 @@ router.put('/:id', validateObjectId, upload.fields([
     }
 
     const reservedFields = ['deleteDocumentIds', 'deleteMediaIds'];
-    const updateData = { ...req.body };
-    reservedFields.forEach((field) => delete updateData[field]);
+    const updateData = pickUpdateFields(req.body, MINE_UPDATE_FIELDS, {
+      skipFields: [...reservedFields, 'owner'],
+    });
 
-    if (updateData.price) updateData.price = Number(updateData.price);
-    ['documents', 'media'].forEach((field) => delete updateData[field]);
+    if (updateData.price !== undefined) updateData.price = Number(updateData.price);
     Object.assign(mine, updateData);
 
     if (req.files && req.files.documents) {
