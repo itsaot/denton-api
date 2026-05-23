@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const YellowMachine = require('../models/YellowMachine');
 const { isSerializedNestedValue, resolveObjectId } = require('../utils/pickUpdateFields');
+const {
+  buildGitHubUploadErrorLog,
+  createGitHubUploadError,
+  getGitHubUploadContext,
+} = require('../utils/githubUploadError');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -40,20 +45,31 @@ const upload = multer({
 const createFilePath = (fileName, type = 'uploads') => `public/${type}/${fileName}`;
 
 const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
-  const filePath = createFilePath(fileName, type);
-  const content = file.buffer.toString('base64');
-  const [owner, repo] = process.env.GITHUB_REPO.split('/');
+  try {
+    if (!process.env.GITHUB_REPO) {
+      throw new Error('Missing required env var GITHUB_REPO');
+    }
 
-  await octokit.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    path: filePath,
-    message: `Upload ${fileName}`,
-    content,
-    branch: process.env.GITHUB_BRANCH || 'main'
-  });
+    const filePath = createFilePath(fileName, type);
+    const content = file.buffer.toString('base64');
+    const [owner, repo] = process.env.GITHUB_REPO.split('/');
 
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
+    await octokit.repos.createOrUpdateFileContents({
+      owner,
+      repo,
+      path: filePath,
+      message: `Upload ${fileName}`,
+      content,
+      branch: process.env.GITHUB_BRANCH || 'main'
+    });
+
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
+  } catch (error) {
+    const filePath = createFilePath(fileName, type);
+    const context = getGitHubUploadContext({ fileName, type, filePath });
+    console.error('Error uploading file to GitHub:', buildGitHubUploadErrorLog(error, context));
+    throw createGitHubUploadError(error, context);
+  }
 };
 
 const deleteFileFromGitHub = async (fileUrl) => {

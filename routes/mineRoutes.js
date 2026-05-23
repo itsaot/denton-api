@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const Mine = require('../models/Mine');
 const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
+const {
+  buildGitHubUploadErrorLog,
+  createGitHubUploadError,
+  getGitHubUploadContext,
+} = require('../utils/githubUploadError');
 const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -47,9 +52,14 @@ const createFilePath = (fileName, type = 'uploads') => `public/${type}/${fileNam
 // Helper function to upload file to GitHub
 const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
   try {
+    if (!process.env.GITHUB_REPO) {
+      throw new Error('Missing required env var GITHUB_REPO');
+    }
+
     const filePath = createFilePath(fileName, type);
     const content = file.buffer.toString('base64');
     const [owner, repo] = process.env.GITHUB_REPO.split('/');
+    const context = getGitHubUploadContext({ fileName, type, filePath });
     
     const { data } = await octokit.repos.createOrUpdateFileContents({
       owner,
@@ -63,8 +73,10 @@ const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
     // Return the raw GitHub URL
     return `https://raw.githubusercontent.com/${owner}/${repo}/${process.env.GITHUB_BRANCH || 'main'}/${filePath}`;
   } catch (error) {
-    console.error('Error uploading file to GitHub:', error);
-    throw new Error('Failed to upload file to GitHub');
+    const filePath = createFilePath(fileName, type);
+    const context = getGitHubUploadContext({ fileName, type, filePath });
+    console.error('Error uploading file to GitHub:', buildGitHubUploadErrorLog(error, context));
+    throw createGitHubUploadError(error, context);
   }
 };
 
