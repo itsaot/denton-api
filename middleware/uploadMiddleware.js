@@ -3,7 +3,6 @@ const path = require('path');
 const { Octokit } = require('@octokit/rest');
 const { createOrUpdateFileContentsWithRetry } = require('../utils/githubContents');
 const {
-  buildGitHubUploadErrorLog,
   createGitHubUploadError,
   getGitHubUploadContext,
 } = require('../utils/githubUploadError');
@@ -60,7 +59,6 @@ const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
   } catch (error) {
     const filePath = createFilePath(fileName, type);
     const context = getGitHubUploadContext({ fileName, type, filePath });
-    console.error('Error uploading file to GitHub:', buildGitHubUploadErrorLog(error, context));
     throw createGitHubUploadError(error, context);
   }
 };
@@ -91,9 +89,7 @@ const deleteFileFromGitHub = async (fileUrl) => {
         branch
       });
     }
-  } catch (error) {
-    console.error('Error deleting file from GitHub:', error);
-  }
+  } catch (error) {}
 };
 
 const cleanupUploadedFiles = async (files) => {
@@ -111,7 +107,7 @@ const cleanupUploadedFiles = async (files) => {
   }
 
   for (const fileUrl of urls) {
-    await deleteFileFromGitHub(fileUrl).catch(console.error);
+    await deleteFileFromGitHub(fileUrl).catch(() => {});
   }
 };
 

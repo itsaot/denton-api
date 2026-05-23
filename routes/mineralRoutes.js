@@ -6,7 +6,6 @@ const { check, validationResult } = require('express-validator');
 const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
 const { createOrUpdateFileContentsWithRetry } = require('../utils/githubContents');
 const {
-  buildGitHubUploadErrorLog,
   createGitHubUploadError,
   getGitHubUploadContext,
 } = require('../utils/githubUploadError');
@@ -83,7 +82,6 @@ const uploadFileToGitHub = async (file, fileName, type = 'mineral-images') => {
   } catch (error) {
     const filePath = createFilePath(fileName, type);
     const context = getGitHubUploadContext({ fileName, type, filePath });
-    console.error('Error uploading file to GitHub:', buildGitHubUploadErrorLog(error, context));
     throw createGitHubUploadError(error, context);
   }
 };
@@ -118,10 +116,7 @@ const deleteFileFromGitHub = async (fileUrl) => {
         branch
       });
     }
-  } catch (error) {
-    console.error('Error deleting file from GitHub:', error);
-    // Don't throw, just log the error
-  }
+  } catch (error) {}
 };
 
 // Helper function to clean up uploaded files on error
@@ -156,11 +151,9 @@ const cleanupUploadedFiles = async (files) => {
       }
     }
     for (const url of urls) {
-      await deleteFileFromGitHub(url).catch(console.error);
+      await deleteFileFromGitHub(url).catch(() => {});
     }
-  } catch (error) {
-    console.error('Error cleaning up files:', error);
-  }
+  } catch (error) {}
 };
 
 const getUploadedImages = (files) => {
@@ -483,8 +476,6 @@ const mineralUpload = upload.fields([
 
 // Create a new mineral with image and document uploads
 router.post('/', protect, restrictTo('admin', 'mineral-manager'), mineralUpload, validateCreateMineral, async (req, res) => {
-  console.log('Request body:', req.body);
-  console.log('Request files:', req.files);
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });

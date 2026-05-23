@@ -48,7 +48,6 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    console.warn(`[cors] Blocked origin: ${origin}`);
     return callback(null, false);
   },
   credentials: true,
@@ -87,9 +86,7 @@ const apiRateLimiter = rateLimit({
 function assertProductionSecrets() {
   if (!isProduction()) return;
 
-  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-    console.warn('[security] JWT_SECRET should be at least 32 characters in production.');
-  }
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) return;
 }
 
 module.exports = {

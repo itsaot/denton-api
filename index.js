@@ -200,12 +200,6 @@ app.get('/api/protected', protect, (req, res) =>
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.error('Error:', err.stack);
-  } else {
-    console.error('Error:', err.message);
-  }
-
   if (err instanceof multer.MulterError) {
     if (err.code === 'FILE_TOO_LARGE') {
       return res.status(400).json({
@@ -231,4 +225,4 @@ app.use((err, req, res, next) => {
 
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT);

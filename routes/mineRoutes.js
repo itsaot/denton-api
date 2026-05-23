@@ -3,7 +3,6 @@ const router = express.Router();
 const Mine = require('../models/Mine');
 const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
 const {
-  buildGitHubUploadErrorLog,
   createGitHubUploadError,
   getGitHubUploadContext,
 } = require('../utils/githubUploadError');
@@ -76,7 +75,6 @@ const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
   } catch (error) {
     const filePath = createFilePath(fileName, type);
     const context = getGitHubUploadContext({ fileName, type, filePath });
-    console.error('Error uploading file to GitHub:', buildGitHubUploadErrorLog(error, context));
     throw createGitHubUploadError(error, context);
   }
 };
@@ -111,10 +109,7 @@ const deleteFileFromGitHub = async (fileUrl) => {
         branch
       });
     }
-  } catch (error) {
-    console.error('Error deleting file from GitHub:', error);
-    // Don't throw, just log the error
-  }
+  } catch (error) {}
 };
 
 // Helper function to clean up uploaded files on error
@@ -136,12 +131,10 @@ const cleanupUploadedFiles = async (files) => {
     
     for (const fileUrl of fileUrls) {
       if (fileUrl) {
-        await deleteFileFromGitHub(fileUrl).catch(console.error);
+        await deleteFileFromGitHub(fileUrl).catch(() => {});
       }
     }
-  } catch (error) {
-    console.error('Error cleaning up files:', error);
-  }
+  } catch (error) {}
 };
 
 // Middleware for validating ObjectId
@@ -189,9 +182,6 @@ router.post('/', upload.fields([
   { name: 'documents', maxCount: 10 },
   { name: 'media', maxCount: 10 }
 ]), validateCreateMine, async (req, res) => {
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-  console.log('Files:', req.files);
-  
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -292,7 +282,6 @@ router.get('/', async (req, res) => {
 
     const mines = await Mine.find(filter).populate('owner', 'firstName lastName email role');
     res.json(mines);
-    console.log(mines)
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -107,12 +107,9 @@ async function notifyAdminsNewMineral(mineral, createdByUser) {
 
 function sendEmailSafely(fn, context) {
   if (!isMailConfigured()) {
-    console.warn(`[email] Skipped ${context}: SYSTEM_EMAIL / SYSTEM_EMAIL_PASSWORD not configured`);
     return;
   }
-  fn().catch((err) => {
-    console.error(`[email] Failed ${context}:`, err.message);
-  });
+  fn().catch(() => {});
 }
 
 module.exports = {
