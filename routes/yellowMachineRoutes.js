@@ -11,6 +11,7 @@ const { check, validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const { Octokit } = require('@octokit/rest');
+const { createOrUpdateFileContentsWithRetry } = require('../utils/githubContents');
 require('dotenv').config();
 
 const octokit = new Octokit({
@@ -54,7 +55,7 @@ const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
     const content = file.buffer.toString('base64');
     const [owner, repo] = process.env.GITHUB_REPO.split('/');
 
-    await octokit.repos.createOrUpdateFileContents({
+    await createOrUpdateFileContentsWithRetry(octokit, {
       owner,
       repo,
       path: filePath,

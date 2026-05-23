@@ -4,6 +4,7 @@ const Mineral = require('../models/Mineral');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { check, validationResult } = require('express-validator');
 const { pickUpdateFields, resolveObjectId } = require('../utils/pickUpdateFields');
+const { createOrUpdateFileContentsWithRetry } = require('../utils/githubContents');
 const {
   buildGitHubUploadErrorLog,
   createGitHubUploadError,
@@ -68,7 +69,7 @@ const uploadFileToGitHub = async (file, fileName, type = 'mineral-images') => {
     const content = file.buffer.toString('base64');
     const [owner, repo] = process.env.GITHUB_REPO.split('/');
     
-    const { data } = await octokit.repos.createOrUpdateFileContents({
+    const { data } = await createOrUpdateFileContentsWithRetry(octokit, {
       owner,
       repo,
       path: filePath,

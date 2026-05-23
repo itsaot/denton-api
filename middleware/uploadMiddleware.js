@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const { Octokit } = require('@octokit/rest');
+const { createOrUpdateFileContentsWithRetry } = require('../utils/githubContents');
 const {
   buildGitHubUploadErrorLog,
   createGitHubUploadError,
@@ -46,7 +47,7 @@ const uploadFileToGitHub = async (file, fileName, type = 'uploads') => {
     const content = file.buffer.toString('base64');
     const [owner, repo] = process.env.GITHUB_REPO.split('/');
 
-    await octokit.repos.createOrUpdateFileContents({
+    await createOrUpdateFileContentsWithRetry(octokit, {
       owner,
       repo,
       path: filePath,
