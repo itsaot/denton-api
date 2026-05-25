@@ -18,7 +18,6 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 const cors = require('cors');
 const morgan = require('morgan');
-const multer = require('multer');
 const {
   corsOptions,
   createHelmetMiddleware,
@@ -26,6 +25,7 @@ const {
   apiRateLimiter,
   assertProductionSecrets,
 } = require('./middleware/security');
+const { errorHandler } = require('./middleware/errorHandler');
 
 // Load environment variables first
 dotenv.config();
@@ -199,29 +199,7 @@ app.get('/api/protected', protect, (req, res) =>
 );
 
 // Error handling middleware
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === 'FILE_TOO_LARGE') {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'File too large. Maximum size is 10MB.',
-      });
-    }
-    return res.status(400).json({
-      status: 'fail',
-      message: err.message,
-    });
-  }
-
-  const status = err.status || err.statusCode || 500;
-  res.status(status).json({
-    status: 'error',
-    message:
-      process.env.NODE_ENV === 'production' && status === 500
-        ? 'Something went wrong!'
-        : err.message || 'Something went wrong!',
-  });
-});
+app.use(errorHandler);
 
 // Start server
 const PORT = process.env.PORT || 5000;
