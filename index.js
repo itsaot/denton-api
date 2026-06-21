@@ -10,6 +10,7 @@ const yellowMachineRoutes = require('./routes/yellowMachineRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const userRoutes = require('./routes/user');
+const platformRoutes = require('./routes/platformRoutes');
 const { protect } = require('./middleware/authMiddleware');
 const uploadMiddleware = require('./middleware/uploadMiddleware');
 const path = require('path');
@@ -91,6 +92,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/minerals', mineralRoutes);
 app.use('/api/yellow-machines', yellowMachineRoutes);
+app.use('/api/platform', platformRoutes);
 
 // File upload route using GitHub upload
 app.post('/api/upload', protect, uploadMiddleware.upload.single('file'), async (req, res) => {

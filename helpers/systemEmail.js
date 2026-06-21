@@ -1,5 +1,10 @@
 const User = require('../models/User');
 const { sendEmail, isMailConfigured } = require('./mailer');
+const khana = require('./khanaConnect');
+
+function isEmailConfigured() {
+  return khana.isConfigured() || isMailConfigured();
+}
 
 function getFrontendBaseUrl() {
   return (
@@ -26,6 +31,14 @@ async function resolveAdminRecipients() {
   return [...emails];
 }
 
+async function deliverEmail({ to, subject, html }) {
+  if (khana.isConfigured()) {
+    await khana.sendTransactionalEmail({ to, subject, html });
+    return;
+  }
+  await sendEmail({ to, subject, html });
+}
+
 async function sendVerificationEmail(user, plainToken) {
   const verifyUrl = `${getFrontendBaseUrl()}/verify-email?token=${plainToken}`;
   const subject = 'Verify your Denton Vision Art account';
@@ -37,7 +50,7 @@ async function sendVerificationEmail(user, plainToken) {
     <p>— Denton Vision Art</p>
   `;
 
-  await sendEmail({ to: user.email, subject, html });
+  await deliverEmail({ to: user.email, subject, html });
 }
 
 async function sendPasswordResetEmail(user, plainToken) {
@@ -51,7 +64,7 @@ async function sendPasswordResetEmail(user, plainToken) {
     <p>— Denton Vision Art</p>
   `;
 
-  await sendEmail({ to: user.email, subject, html });
+  await deliverEmail({ to: user.email, subject, html });
 }
 
 async function notifyAdminsNewMine(mine, owner) {
@@ -77,7 +90,7 @@ async function notifyAdminsNewMine(mine, owner) {
     <p>— Denton Vision Art</p>
   `;
 
-  await sendEmail({ to: recipients, subject, html });
+  await deliverEmail({ to: recipients, subject, html });
 }
 
 async function notifyAdminsNewMineral(mineral, createdByUser) {
@@ -102,14 +115,16 @@ async function notifyAdminsNewMineral(mineral, createdByUser) {
     <p>— Denton Vision Art</p>
   `;
 
-  await sendEmail({ to: recipients, subject, html });
+  await deliverEmail({ to: recipients, subject, html });
 }
 
 function sendEmailSafely(fn, context) {
-  if (!isMailConfigured()) {
+  if (!isEmailConfigured()) {
     return;
   }
-  fn().catch(() => {});
+  fn().catch((err) => {
+    console.error('[systemEmail]', context || 'send failed:', err.message);
+  });
 }
 
 module.exports = {
@@ -119,5 +134,5 @@ module.exports = {
   notifyAdminsNewMine,
   notifyAdminsNewMineral,
   sendEmailSafely,
-  isMailConfigured,
+  isMailConfigured: isEmailConfigured,
 };

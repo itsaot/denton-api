@@ -5,6 +5,7 @@ const Mineral = require('../models/Mineral');
 const Offer = require('../models/Offer');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
+const khana = require('../helpers/khanaConnect');
 
 router.get('/user', protect, async (req, res) => {
   try {
@@ -57,6 +58,13 @@ router.get('/admin', protect, async (req, res) => {
       totalUsers: users,
       mineStatusBreakdown: mines,
       popularCommodities,
+      khanaconnect: khana.isConfigured()
+        ? {
+            configured: true,
+            clientID: khana.getConfig().clientID,
+            dashboardHint: 'View email, newsletter, and site analytics in the KhanaConnect dashboard.',
+          }
+        : { configured: false },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
