@@ -118,6 +118,95 @@ async function notifyAdminsNewMineral(mineral, createdByUser) {
   await deliverEmail({ to: recipients, subject, html });
 }
 
+function formatZar(amount) {
+  return `R${Number(amount || 0).toLocaleString('en-ZA')}`;
+}
+
+function getOfferAssetInfo(offer, target) {
+  const assetName = target.doc.name;
+  const assetType = target.type === 'mine' ? 'Mining property' : 'Mineral';
+  const listedPrice =
+    target.type === 'mine' ? target.doc.price : target.doc.pricePerTonne;
+  return { assetName, assetType, listedPrice };
+}
+
+/** Notify buyer, seller, and admins when a new offer / purchase request is submitted. */
+async function notifyNewOffer(offer, investor, target, seller) {
+  const { assetName, assetType, listedPrice } = getOfferAssetInfo(offer, target);
+  const amount = formatZar(offer.amount);
+  const listed = formatZar(listedPrice);
+  const dashboardUrl = `${getFrontendBaseUrl()}/dashboard`;
+  const buyerName = `${investor.firstName} ${investor.lastName}`.trim();
+
+  await deliverEmail({
+    to: investor.email,
+    subject: `Offer submitted: ${assetName}`,
+    html: `
+      <p>Hi ${investor.firstName},</p>
+      <p>Your offer of <strong>${amount}</strong> on <strong>${assetName}</strong> (${assetType}) has been received and is pending review.</p>
+      <p>Listed price: ${listed}</p>
+      ${offer.message ? `<p><strong>Your message:</strong> ${offer.message}</p>` : ''}
+      <p><a href="${dashboardUrl}">View your dashboard</a></p>
+      <p>— Denton Vision Art</p>
+    `,
+  });
+
+  if (seller?.email) {
+    await deliverEmail({
+      to: seller.email,
+      subject: `New offer on ${assetName}`,
+      html: `
+        <p>Hi ${seller.firstName},</p>
+        <p><strong>${buyerName}</strong> (${investor.email}) submitted an offer of <strong>${amount}</strong> on your listing <strong>${assetName}</strong>.</p>
+        ${offer.message ? `<p><strong>Message:</strong> ${offer.message}</p>` : ''}
+        <p><a href="${dashboardUrl}">Review offers in your dashboard</a></p>
+        <p>— Denton Vision Art</p>
+      `,
+    });
+  }
+
+  const recipients = await resolveAdminRecipients();
+  if (recipients.length > 0) {
+    await deliverEmail({
+      to: recipients,
+      subject: `New purchase offer: ${assetName}`,
+      html: `
+        <p>A new offer has been submitted on the platform.</p>
+        <ul>
+          <li><strong>Asset:</strong> ${assetName} (${assetType})</li>
+          <li><strong>Offer amount:</strong> ${amount}</li>
+          <li><strong>Listed price:</strong> ${listed}</li>
+          <li><strong>Buyer:</strong> ${buyerName} (${investor.email})</li>
+          <li><strong>Seller:</strong> ${seller ? `${seller.firstName} ${seller.lastName} (${seller.email})` : 'Unknown'}</li>
+          <li><strong>Offer ID:</strong> ${offer._id}</li>
+        </ul>
+        ${offer.message ? `<p><strong>Message:</strong> ${offer.message}</p>` : ''}
+        <p>— Denton Vision Art</p>
+      `,
+    });
+  }
+}
+
+/** Notify buyer when offer is accepted or rejected. */
+async function notifyOfferStatusChange(offer, investor, status, target) {
+  const { assetName, assetType } = getOfferAssetInfo(offer, target);
+  const amount = formatZar(offer.amount);
+  const dashboardUrl = `${getFrontendBaseUrl()}/dashboard`;
+  const accepted = status === 'Accepted';
+
+  await deliverEmail({
+    to: investor.email,
+    subject: accepted ? `Offer accepted: ${assetName}` : `Offer update: ${assetName}`,
+    html: `
+      <p>Hi ${investor.firstName},</p>
+      <p>Your offer of <strong>${amount}</strong> on <strong>${assetName}</strong> (${assetType}) has been <strong>${accepted ? 'accepted' : 'rejected'}</strong>.</p>
+      ${accepted ? '<p>Our team will be in touch regarding next steps and payment arrangements.</p>' : '<p>You may submit a revised offer or explore other listings on the platform.</p>'}
+      <p><a href="${dashboardUrl}">View your dashboard</a></p>
+      <p>— Denton Vision Art</p>
+    `,
+  });
+}
+
 function sendEmailSafely(fn, context) {
   if (!isEmailConfigured()) {
     return;
@@ -133,6 +222,8 @@ module.exports = {
   sendPasswordResetEmail,
   notifyAdminsNewMine,
   notifyAdminsNewMineral,
+  notifyNewOffer,
+  notifyOfferStatusChange,
   sendEmailSafely,
   isMailConfigured: isEmailConfigured,
 };

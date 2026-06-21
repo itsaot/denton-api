@@ -13,7 +13,6 @@ const mineralSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'A mineral must have a name'],
-    unique: true,
     trim: true,
     maxlength: [50, 'A mineral name must have less than or equal to 50 characters'],
     minlength: [2, 'A mineral name must have more than or equal to 2 characters']

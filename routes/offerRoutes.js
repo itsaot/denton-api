@@ -7,6 +7,7 @@ const Mine = require('../models/Mine');
 const Mineral = require('../models/Mineral');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
+const { sendEmailSafely, notifyNewOffer, notifyOfferStatusChange } = require('../helpers/systemEmail');
 
 const validateObjectId = (param = 'id') => (req, res, next) => {
   const id = req.params[param];
@@ -253,6 +254,16 @@ router.post('/', protect, validateCreateOffer, async (req, res) => {
       { path: 'mineral', select: 'name mineralType pricePerTonne availableTonnes createdBy' },
       { path: 'investor', select: 'firstName lastName email role' },
     ]);
+
+    const investor = await User.findById(req.user._id);
+    const sellerId =
+      target.type === 'mine' ? target.doc.owner : target.doc.createdBy;
+    const seller = sellerId ? await User.findById(sellerId) : null;
+    sendEmailSafely(
+      () => notifyNewOffer(populated, investor, target, seller),
+      `new offer on ${target.doc.name}`
+    );
+
     res.status(201).json(populated);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -362,6 +373,19 @@ router.patch('/:id/accept', protect, validateObjectId(), async (req, res) => {
       .populate('mine', 'name location commodityType price owner')
       .populate('mineral', 'name mineralType pricePerTonne createdBy')
       .populate('investor', 'firstName lastName email');
+
+    const investor = populated.investor;
+    const target =
+      populated.mine
+        ? { type: 'mine', doc: populated.mine }
+        : { type: 'mineral', doc: populated.mineral };
+    if (investor && target.doc) {
+      sendEmailSafely(
+        () => notifyOfferStatusChange(populated, investor, 'Accepted', target),
+        `offer accepted ${populated._id}`
+      );
+    }
+
     res.json(populated);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -390,6 +414,19 @@ router.patch('/:id/reject', protect, validateObjectId(), async (req, res) => {
       .populate('mine', 'name location commodityType price owner')
       .populate('mineral', 'name mineralType pricePerTonne createdBy')
       .populate('investor', 'firstName lastName email');
+
+    const investor = updated.investor;
+    const target =
+      updated.mine
+        ? { type: 'mine', doc: updated.mine }
+        : { type: 'mineral', doc: updated.mineral };
+    if (investor && target.doc) {
+      sendEmailSafely(
+        () => notifyOfferStatusChange(updated, investor, 'Rejected', target),
+        `offer rejected ${updated._id}`
+      );
+    }
+
     res.json(updated);
   } catch (err) {
     res.status(500).json({ message: err.message });
